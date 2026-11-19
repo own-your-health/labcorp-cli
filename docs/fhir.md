@@ -5,10 +5,22 @@
 `method: "portal"` (medical-common DESIGN.md §1.4). Every resource carries
 `meta.source` `labcorp:portal` and the tag `mapped-from-labcorp-patient`
 (system `https://github.com/piekstra/labcorp-cli/fhir/tag`), and
-`meta.lastUpdated` the time its page was read (DESIGN.md §1.4): a result's
-resources when its detail was read, `Organization` and `Patient` the
-header's `pulled_at`. A later export's version of a resource therefore
-replaces the one filed before, a corrected result included.
+`meta.lastUpdated`, the time its page was read (DESIGN.md §1.4): a
+result's resources when its detail was read, `Organization` and `Patient`
+the header's `pulled_at`. A later export's version of a resource therefore
+replaces the one filed before when its content changed, and only refreshes
+the filed copy (medical-common's `version::decide`, `Refreshed`) when it
+did not.
+
+The report PDF's `Binary` and `DocumentReference` take the read time too,
+though §1.4 dates a document the site lists by its own date. A report's
+PDF changes while its tests come in, and nothing seen yet says Labcorp
+moves `reportDate` when it does (to confirm against a real account). Under
+an unmoved listed date the final PDF would be no later than the
+preliminary one filed, and would be filed as older; under the read time it
+replaces it (`tests/site_e2e.rs`,
+`the_final_report_replaces_the_preliminary_one_in_the_store`). The cost: an
+unchanged PDF is rewritten in place on each import.
 
 ## Identity
 

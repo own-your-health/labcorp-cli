@@ -593,7 +593,12 @@ pub fn read_at(mut v: Value, at: &str) -> Value {
 
 /// A result's resources in stream order: each value, each ordered test,
 /// the report, then with `pdf` its file and the document that files it.
-/// Each is dated `at`, when the result was read.
+/// Each is dated `at`, when the result was read, the report PDF included.
+/// DESIGN.md §1.4 dates a listed document by its own date, but Labcorp
+/// reissues a report's PDF under the same date while its tests come in,
+/// and a version no later than the one filed is filed as older: only the
+/// read time lets the newer PDF replace it. An unchanged one refreshes the
+/// copy filed (docs/fhir.md).
 pub fn report_resources(p: &Person, d: &Detail, pdf: Option<&[u8]>, at: &str) -> Result<Vec<RawResource>, CliError> {
     let h = &d.header;
     let ids = Ids::of(d);
