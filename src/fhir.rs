@@ -583,26 +583,41 @@ pub fn document_reference(p: &Person, d: &Detail, size: u64) -> Value {
     v
 }
 
+/// `v` dated by when its page was read (`at`, RFC 3339): medical-common
+/// DESIGN.md §1.4 dates a resource mapped from a patient site that way, so
+/// a later export's version of it replaces an earlier one.
+pub fn read_at(mut v: Value, at: &str) -> Value {
+    v["meta"]["lastUpdated"] = at.into();
+    v
+}
+
 /// A result's resources in stream order: each value, each ordered test,
 /// the report, then with `pdf` its file and the document that files it.
-pub fn report_resources(p: &Person, d: &Detail, pdf: Option<&[u8]>) -> Result<Vec<RawResource>, CliError> {
+/// Each is dated `at`, when the result was read.
+pub fn report_resources(p: &Person, d: &Detail, pdf: Option<&[u8]>, at: &str) -> Result<Vec<RawResource>, CliError> {
     let h = &d.header;
     let ids = Ids::of(d);
     let mut out = Vec::new();
     for (i, item) in d.items.iter().enumerate() {
-        for (at, line) in item.lines.iter().enumerate() {
+        for (place, line) in item.lines.iter().enumerate() {
             let mut n = Numbers::default();
-            let v = value_observation(p, h, item, line, &ids.lines[i][at], &mut n);
+            let v = read_at(value_observation(p, h, item, line, &ids.lines[i][place], &mut n), at);
             out.push(resource(&v, &n)?);
         }
-        let v = panel_observation(p, h, item, &ids.panels[i], &ids.lines[i]);
+        let v = read_at(panel_observation(p, h, item, &ids.panels[i], &ids.lines[i]), at);
         out.push(RawResource::from_value(&v)?);
     }
     let size = pdf.map(|b| b.len() as u64);
-    out.push(RawResource::from_value(&diagnostic_report(p, d, &ids, size))?);
+    out.push(RawResource::from_value(&read_at(
+        diagnostic_report(p, d, &ids, size),
+        at,
+    ))?);
     if let Some(bytes) = pdf {
-        out.push(RawResource::from_value(&binary(h, bytes))?);
-        out.push(RawResource::from_value(&document_reference(p, d, bytes.len() as u64))?);
+        out.push(RawResource::from_value(&read_at(binary(h, bytes), at))?);
+        out.push(RawResource::from_value(&read_at(
+            document_reference(p, d, bytes.len() as u64),
+            at,
+        ))?);
     }
     Ok(out)
 }
@@ -734,7 +749,12 @@ mod tests {
         let doc = document_reference(&person(), &d, 10);
         assert_eq!(doc["context"]["related"][0]["reference"], "DiagnosticReport/lcr-r1");
         assert_eq!(doc["date"], "2026-03-05T00:00:00Z");
-        let all = report_resources(&person(), &d, Some(b"%PDF-1.4 dummy")).unwrap();
+        let all = report_resources(&person(), &d, Some(b"%PDF-1.4 dummy"), "2026-03-06T12:00:00Z").unwrap();
+        for r in &all {
+            let v = r.value().unwrap();
+            assert_eq!(v["meta"]["lastUpdated"], "2026-03-06T12:00:00Z", "{}", r.resource_type);
+            assert_eq!(v["meta"]["source"], META_SOURCE);
+        }
         let kinds: Vec<&str> = all.iter().map(|r| r.resource_type.as_str()).collect();
         assert_eq!(
             kinds,
