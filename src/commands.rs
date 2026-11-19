@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 
 use crate::app::Ctx;
 use crate::cli::*;
-use crate::client::{Client, Endpoints, RATE_LIMITED, UNREACHABLE};
+use crate::client::{Client, Endpoints, RATE_LIMITED, RENEWAL_FAILED, UNREACHABLE};
 use crate::fhir;
 use crate::portal::{self, Detail, Header, Kind, Person};
 use crate::session::SessionStore;
@@ -34,15 +34,17 @@ pub const NOT_READ: &str = "not_read";
 const EXIT_NOT_FOUND: i32 = 4;
 
 /// Whether a failed read stops a run of reads (an export, `download --all`)
-/// instead of skipping its one result: the session was refused, Labcorp
-/// asked to wait, or it did not answer. Each would fail every later read
-/// too. A 403 (`Forbidden`) is about one result and is skipped.
+/// instead of skipping its one result: the session was refused, its
+/// renewal failed, Labcorp asked to wait, or it did not answer. Each would
+/// fail every later read too. A 403 (`Forbidden`) is about one result and
+/// is skipped.
 pub fn ends_run(e: &CliError) -> bool {
     matches!(
         e.reason(),
         Some(Reason::CredentialRefused | Reason::NoCredential | Reason::ClientBlocked)
-    ) || e.reason() == Some(RATE_LIMITED)
-        || e.reason() == Some(UNREACHABLE)
+    ) || [RATE_LIMITED, UNREACHABLE, RENEWAL_FAILED]
+        .iter()
+        .any(|r| e.reason() == Some(*r))
 }
 
 /// The command's own arguments, checked before the vault or the site is
@@ -52,7 +54,7 @@ pub fn check_args(cli: &Cli) -> Result<(), CliError> {
         Command::Records(RecordsCmd::Export(args)) => {
             if !args.ndjson && args.output.is_none() {
                 return Err(CliError::Usage(
-                    "say where the stream goes: --ndjson for stdout (`| medrec import --from labcorp`), or -o <DIR>"
+                    "say where the stream goes: --ndjson for stdout (what `medrec import --from labcorp` reads), or -o <DIR>"
                         .into(),
                 ));
             }
@@ -924,7 +926,8 @@ mod tests {
         let forbidden = CliError::Auth("x".into()).because(Reason::Forbidden);
         let wait = CliError::Upstream("x".into()).because(RATE_LIMITED);
         let gone = CliError::Upstream("x".into()).because(UNREACHABLE);
-        assert!(ends_run(&refused) && ends_run(&wait) && ends_run(&gone));
+        let unrenewed = CliError::Upstream("x".into()).because(RENEWAL_FAILED);
+        assert!(ends_run(&refused) && ends_run(&wait) && ends_run(&gone) && ends_run(&unrenewed));
         assert!(!ends_run(&forbidden));
         assert!(!ends_run(&CliError::Upstream("x".into())));
         assert!(!ends_run(&CliError::NotFound("x".into())));

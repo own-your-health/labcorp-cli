@@ -70,8 +70,8 @@ A decimal keeps its written spelling: `1.50` is written `1.50`.
 
 A failure that every later read would meet too ends the stream incomplete,
 its error in the trailer: a refused session (a 401 after renewal, or Okta's
-session ended; exit 3), a request to wait (a 429 or `Retry-After`; exit 5)
-or no answer at all (exit 5). The next export starts again from the oldest
+session ended; exit 3), a renewal that failed (exit 5), a request to wait (a
+429 or `Retry-After`; exit 5) or no answer at all (exit 5). The next export starts again from the oldest
 result; the ids make it merge with what was filed.
 
 A result whose `pid` names a person the login does not show is nobody's

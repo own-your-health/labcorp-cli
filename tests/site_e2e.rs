@@ -191,6 +191,25 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, plan: &Mutex<Plan>) {
     };
     let path = target.split('?').next().unwrap_or("").to_string();
 
+    let plan = plan.lock().unwrap().clone();
+    let fault = plan.faults.iter().find(|f| {
+        n > f.after
+            && match f.path.as_deref() {
+                // A fault for every read leaves Okta alone.
+                None => !path.starts_with("/oauth2/"),
+                Some(p) if f.exact => path == p,
+                Some(p) => path.contains(p),
+            }
+    });
+    if let Some(f) = fault {
+        let mut extra = vec![("Content-Type", "application/json".to_string())];
+        if f.status == 429 {
+            extra.push(("Retry-After", "30".into()));
+        }
+        respond(&mut stream, f.status, &extra, br#"{"message":"dummy refusal"}"#);
+        return;
+    }
+
     // Okta.
     if path == "/oauth2/default/v1/authorize" {
         let state = query(&target, "state").unwrap_or_default();
@@ -227,21 +246,6 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, plan: &Mutex<Plan>) {
     }
 
     // The portal API.
-    let plan = plan.lock().unwrap().clone();
-    let fault = plan.faults.iter().find(|f| {
-        n > f.after
-            && f.path
-                .as_deref()
-                .is_none_or(|p| if f.exact { path == p } else { path.contains(p) })
-    });
-    if let Some(f) = fault {
-        let mut extra = vec![("Content-Type", "application/json".to_string())];
-        if f.status == 429 {
-            extra.push(("Retry-After", "30".into()));
-        }
-        respond(&mut stream, f.status, &extra, br#"{"message":"dummy refusal"}"#);
-        return;
-    }
     let auth = headers.get("authorization").cloned().unwrap_or_default();
     if auth != format!("Bearer {LIVE}") && auth != format!("Bearer {RENEWED}") {
         json(&mut stream, 401, r#"{"message":"Unauthorized"}"#);
@@ -726,5 +730,61 @@ fn a_result_naming_nobody_here_is_never_filed_under_the_only_person() {
         e.warnings[1].starts_with("3 result(s) name a person"),
         "{}",
         e.warnings[1]
+    );
+}
+
+#[test]
+fn a_failed_renewal_ends_the_run_and_okta_is_asked_once() {
+    for status in [503, 429] {
+        let server = Server::start();
+        let kept = Kept::default();
+        server.fail_path("/oauth2/default/v1/token", status, true);
+        // The household reads with the live token; the token then expires
+        // before the results are read.
+        let client = Client::new(
+            &profile(),
+            session("dummy-old-token", 1, Some(OKTA_LIVE)),
+            &kept,
+            server.endpoints(),
+        )
+        .unwrap();
+        let mut site = Site::new(client, true);
+        let e = site.household().err().unwrap();
+        assert_eq!(e.exit_code(), 5, "{status}");
+        assert!(commands::ends_run(&e), "{status}: {e}");
+        // A second read asks Okta nothing more.
+        let again = site.headers().err().unwrap();
+        assert_eq!(again.message(), e.message());
+        let paths = server.paths();
+        let okta: Vec<&String> = paths.iter().filter(|p| p.starts_with("/oauth2/")).collect();
+        assert_eq!(okta.len(), 2, "{status}: one authorize, one token: {okta:?}");
+        assert!(!paths.iter().any(|p| p.starts_with("/protected")), "{paths:?}");
+        assert!(kept.0.lock().unwrap().is_empty());
+    }
+}
+
+#[test]
+fn a_renewal_failing_mid_export_ends_it_incomplete() {
+    let server = Server::start();
+    let kept = Kept::default();
+    // Every read after the household and the list is refused, and the
+    // renewal that 401 asks for fails at the token endpoint.
+    server.fail_after(3, 401);
+    server.fail_path("/oauth2/default/v1/token", 503, true);
+    let (_, t) = export(&server, session(LIVE, FAR, Some(OKTA_LIVE)), &kept, "SYNP000001");
+    assert!(!t.complete);
+    assert_eq!(
+        t.error.as_ref().unwrap().exit_code,
+        Some(5),
+        "{:?} {:?}",
+        t.error,
+        server.paths()
+    );
+    let paths = server.paths();
+    assert_eq!(paths.iter().filter(|p| p.contains("/v1/token")).count(), 1, "{paths:?}");
+    assert_eq!(
+        paths.iter().filter(|p| p.contains("/results/SYNR")).count(),
+        1,
+        "{paths:?}"
     );
 }

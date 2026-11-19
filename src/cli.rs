@@ -173,7 +173,7 @@ pub struct ExportArgs {
     /// Leave the report PDFs out of the stream.
     #[arg(long)]
     pub no_pdfs: bool,
-    /// Write the stream to stdout (`| medrec import --from labcorp`). The
+    /// Write the stream to stdout (what `medrec import --from labcorp` runs). The
     /// stream is the output, so --json with it is a usage error.
     #[arg(long, conflicts_with = "output")]
     pub ndjson: bool,
@@ -228,8 +228,9 @@ pub struct DownloadArgs {
     /// A document id from `labcorp documents list`.
     #[arg(required_unless_present = "all", conflicts_with = "all")]
     pub id: Option<String>,
-    /// Every report PDF. Files already saved in the folder with the same
-    /// bytes are skipped (code `exists`), unless --overwrite.
+    /// Every report PDF. A file of the same name already in the folder is
+    /// kept without being read again (code `exists`), even if Labcorp has
+    /// updated the report since; --overwrite reads and replaces them all.
     #[arg(long)]
     pub all: bool,
     /// The file to write (`-` for stdout), or with --all the folder.

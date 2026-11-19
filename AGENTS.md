@@ -81,11 +81,13 @@ bulk crawling, no retry beyond the one after a renewal. Every URL is built
 from the fixed API origin; `api` refuses another host. A 401 after renewal
 (`Reason::CredentialRefused`) and a 403 (`Reason::Forbidden`) are exit 3,
 404 is 4, the rest 5; a 429 or an answer with `Retry-After` is tagged
-`client::RATE_LIMITED` and no answer `client::UNREACHABLE`.
+`client::RATE_LIMITED` and no answer `client::UNREACHABLE`. Every renewal
+failure carries a reason (`client::RENEWAL_FAILED` when no other fits) and
+is kept: the client asks Okta again only after a renewal that worked.
 
 A run of reads (`records export`, `documents download --all`) stops at the
 first failure every later read would meet too (`commands::ends_run`: a
-refused session, a request to wait, no answer) and skips anything else,
+refused session, a failed renewal, a request to wait, no answer) and skips anything else,
 a 403 included, with its code. A result is filed only under the person its
 `pid` names (`commands::owner`); one naming nobody the login shows is left
 out, never given to the only person.

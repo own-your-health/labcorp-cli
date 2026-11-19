@@ -36,7 +36,10 @@ labcorp results get <RESULT ID> --profile adult1  # every value, flag and range
 labcorp documents list --profile adult1          # the report PDFs
 labcorp documents download --all -o ~/Archive/Labcorp --profile adult1
 
-labcorp records export --profile adult1 --patient <ID> --ndjson | medrec import --from labcorp
+labcorp records export --profile adult1 --patient <ID> --ndjson   # records-stream/v1 on stdout
+
+# medrec runs the export itself:
+medrec --profile <FOLDER> import --from labcorp --from-profile adult1 --patient <ID> [--person <P>]
 
 # One read of the portal API, printed as the JSON it answers:
 labcorp api GET /protected/patients/current --profile adult1
