@@ -808,7 +808,7 @@ fn a_renewal_failing_mid_export_ends_it_incomplete() {
 }
 
 #[test]
-fn every_resource_is_dated_by_when_its_page_was_read() {
+fn every_resource_is_dated_by_its_read_and_the_pdf_by_its_listed_date() {
     let server = Server::start();
     let kept = Kept::default();
     let e = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
@@ -827,6 +827,11 @@ fn every_resource_is_dated_by_when_its_page_was_read() {
         let at = r["meta"]["lastUpdated"]
             .as_str()
             .unwrap_or_else(|| panic!("{} has no lastUpdated", r["id"]));
+        if matches!(r["resourceType"].as_str(), Some("Binary" | "DocumentReference")) {
+            // The report PDF carries the date Labcorp lists it with.
+            assert_eq!(at, "2026-03-05T10:00:00Z", "{}", r["id"]);
+            continue;
+        }
         // Every read time is RFC 3339 UTC from the same clock, so text
         // order is time order.
         assert!(at.ends_with('Z') && at >= pulled, "{}: {at} before {pulled}", r["id"]);
@@ -841,7 +846,8 @@ fn every_resource_is_dated_by_when_its_page_was_read() {
 const PDF_PRELIMINARY: &[u8] = b"%PDF-1.4\n% SYNTHETIC TEST DATA - PRELIMINARY REPORT\n%%EOF\n";
 const PDF_FINAL: &[u8] = b"%PDF-1.4\n% SYNTHETIC TEST DATA - FINAL REPORT, ALL TESTS IN\n%%EOF\n";
 
-/// One resource of an export as medrec files it: its line and provenance.
+/// One resource of an export as a store files it: its line, and the
+/// provenance of the record filed from it.
 fn filed(e: &Exported, id: &str) -> (RawResource, Provenance) {
     let v = e
         .resources
@@ -850,6 +856,18 @@ fn filed(e: &Exported, id: &str) -> (RawResource, Provenance) {
         .unwrap_or_else(|| panic!("no {id}"));
     let r = RawResource::from_value(v).unwrap();
     let p = Provenance::from_stream(&e.header, &r, "2026-01-01T00:00:00Z", "medrec-test");
+    (r, p)
+}
+
+/// The same for a resource no record is filed from, as a store keeps a
+/// report's `Binary` and `DocumentReference`: with no provenance of its
+/// own, decided against one with no known time (DESIGN.md §1.4, v0.6.5).
+fn held_bare(e: &Exported, id: &str) -> (RawResource, Provenance) {
+    let (r, mut p) = filed(e, id);
+    if let Some(s) = p.source_resource.as_mut() {
+        s.last_updated = None;
+    }
+    assert!(p.current_at().is_none(), "{id}");
     (r, p)
 }
 
@@ -863,32 +881,32 @@ fn the_final_report_replaces_the_preliminary_one_in_the_store() {
     std::thread::sleep(std::time::Duration::from_millis(1100));
     server.headers("headers-all.json", PDF_FINAL);
     let late = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
-    for id in [
-        "lcb-SYNR00000001",
-        "lcd-SYNR00000001",
-        "lcr-SYNR00000001",
-        "lco-SYNR00000001-000010-000011",
+    // The PDF changed under the same listed date: held with no time of its
+    // own, the final one replaces it.
+    for id in ["lcb-SYNR00000001", "lcd-SYNR00000001"] {
+        let (held, held_p) = held_bare(&early, id);
+        let (incoming, incoming_p) = filed(&late, id);
+        assert_eq!(
+            held.value().unwrap()["meta"]["lastUpdated"],
+            incoming.value().unwrap()["meta"]["lastUpdated"]
+        );
+        assert_eq!(decide(&held, &held_p, &incoming, &incoming_p), Filing::Replaces, "{id}");
+    }
+    // The records, dated by the read: the report changed status and
+    // replaces; the value did not change and only refreshes.
+    for (id, want) in [
+        ("lcr-SYNR00000001", Filing::Replaces),
+        ("lco-SYNR00000001-000010-000011", Filing::Refreshed),
     ] {
         let (held, held_p) = filed(&early, id);
         let (incoming, incoming_p) = filed(&late, id);
-        let want = if id.starts_with("lcb-") || id.starts_with("lcd-") || id.starts_with("lcr-") {
-            Filing::Replaces
-        } else {
-            // The value itself did not change; only its time moves on.
-            Filing::Refreshed
-        };
         assert_eq!(decide(&held, &held_p, &incoming, &incoming_p), want, "{id}");
     }
-    // Read again unchanged, the final PDF only refreshes the copy filed.
+    // Read again unchanged, the final PDF is the same line: nothing to
+    // rewrite.
     std::thread::sleep(std::time::Duration::from_millis(1100));
     let again = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
     for id in ["lcb-SYNR00000001", "lcd-SYNR00000001"] {
-        let (held, held_p) = filed(&late, id);
-        let (incoming, incoming_p) = filed(&again, id);
-        assert_eq!(
-            decide(&held, &held_p, &incoming, &incoming_p),
-            Filing::Refreshed,
-            "{id}"
-        );
+        assert_eq!(filed(&late, id).0.raw, filed(&again, id).0.raw, "{id}");
     }
 }

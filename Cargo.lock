@@ -1634,8 +1634,8 @@ dependencies = [
 
 [[package]]
 name = "pk-med-fhir"
-version = "0.6.4"
-source = "git+https://github.com/piekstra/medical-common?tag=v0.6.4#87e599f7ad62cfa69b7a4a09489e1e9ce8938f69"
+version = "0.6.5"
+source = "git+https://github.com/piekstra/medical-common?tag=v0.6.5#b17d70148c26b2dd5068d0e10ebf5c82a92af04d"
 dependencies = [
  "base64 0.22.1",
  "pk-cli-core",
@@ -1646,8 +1646,8 @@ dependencies = [
 
 [[package]]
 name = "pk-med-records"
-version = "0.6.4"
-source = "git+https://github.com/piekstra/medical-common?tag=v0.6.4#87e599f7ad62cfa69b7a4a09489e1e9ce8938f69"
+version = "0.6.5"
+source = "git+https://github.com/piekstra/medical-common?tag=v0.6.5#b17d70148c26b2dd5068d0e10ebf5c82a92af04d"
 dependencies = [
  "pk-cli-core",
  "pk-med-fhir",

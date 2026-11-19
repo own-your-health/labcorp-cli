@@ -591,14 +591,25 @@ pub fn read_at(mut v: Value, at: &str) -> Value {
     v
 }
 
+/// When Labcorp lists a result's report as issued: its report time when it
+/// has an offset, else its report day, else its collection day, at
+/// `00:00:00Z`. `None` when the header carries no date.
+pub fn listed_at(h: &Header) -> Option<String> {
+    h.report_date.as_deref().and_then(portal::instant).or_else(|| {
+        h.report_day()
+            .or_else(|| h.service_day())
+            .map(|d| format!("{d}T00:00:00Z"))
+    })
+}
+
 /// A result's resources in stream order: each value, each ordered test,
 /// the report, then with `pdf` its file and the document that files it.
-/// Each is dated `at`, when the result was read, the report PDF included.
-/// DESIGN.md §1.4 dates a listed document by its own date, but Labcorp
-/// reissues a report's PDF under the same date while its tests come in,
-/// and a version no later than the one filed is filed as older: only the
-/// read time lets the newer PDF replace it. An unchanged one refreshes the
-/// copy filed (docs/fhir.md).
+/// Each is dated `at`, when the result was read, except the report PDF's
+/// `Binary` and `DocumentReference`: a document the site lists with a date
+/// of its own carries that date (DESIGN.md §1.4, [`listed_at`]), so an
+/// unchanged PDF is the same line on every export. A store keeps them with
+/// no provenance of its own, so a PDF with other content replaces the held
+/// one whatever their dates (§1.4, v0.6.5).
 pub fn report_resources(p: &Person, d: &Detail, pdf: Option<&[u8]>, at: &str) -> Result<Vec<RawResource>, CliError> {
     let h = &d.header;
     let ids = Ids::of(d);
@@ -618,10 +629,12 @@ pub fn report_resources(p: &Person, d: &Detail, pdf: Option<&[u8]>, at: &str) ->
         at,
     ))?);
     if let Some(bytes) = pdf {
-        out.push(RawResource::from_value(&read_at(binary(h, bytes), at))?);
+        let listed = listed_at(h);
+        let doc_at = listed.as_deref().unwrap_or(at);
+        out.push(RawResource::from_value(&read_at(binary(h, bytes), doc_at))?);
         out.push(RawResource::from_value(&read_at(
             document_reference(p, d, bytes.len() as u64),
-            at,
+            doc_at,
         ))?);
     }
     Ok(out)
@@ -757,7 +770,13 @@ mod tests {
         let all = report_resources(&person(), &d, Some(b"%PDF-1.4 dummy"), "2026-03-06T12:00:00Z").unwrap();
         for r in &all {
             let v = r.value().unwrap();
-            assert_eq!(v["meta"]["lastUpdated"], "2026-03-06T12:00:00Z", "{}", r.resource_type);
+            // The PDF carries the date Labcorp lists the report with; the
+            // rest, when it was read.
+            let want = match r.resource_type.as_str() {
+                "Binary" | "DocumentReference" => "2026-03-05T10:00:00Z",
+                _ => "2026-03-06T12:00:00Z",
+            };
+            assert_eq!(v["meta"]["lastUpdated"], want, "{}", r.resource_type);
             assert_eq!(v["meta"]["source"], META_SOURCE);
         }
         let kinds: Vec<&str> = all.iter().map(|r| r.resource_type.as_str()).collect();
@@ -780,5 +799,18 @@ mod tests {
         let p = patient(&person());
         assert_eq!(p["gender"], "female");
         assert_eq!(p["name"][0]["given"][0], "Alex");
+    }
+
+    #[test]
+    fn a_listed_report_is_dated_by_labcorp_not_by_the_read() {
+        let h = |v: Value| Header::read(&v).unwrap();
+        let both =
+            h(json!({ "id": "r", "dateOfService": "2026-03-04T09:00:00Z", "reportDate": "2026-03-05T10:00:00Z" }));
+        assert_eq!(listed_at(&both).as_deref(), Some("2026-03-05T10:00:00Z"));
+        let day_only = h(json!({ "id": "r", "reportDate": "03/05/2026" }));
+        assert_eq!(listed_at(&day_only).as_deref(), Some("2026-03-05T00:00:00Z"));
+        let collected = h(json!({ "id": "r", "dateOfService": "2026-03-04T09:00:00Z" }));
+        assert_eq!(listed_at(&collected).as_deref(), Some("2026-03-04T00:00:00Z"));
+        assert_eq!(listed_at(&h(json!({ "id": "r" }))), None);
     }
 }
