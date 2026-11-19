@@ -1,0 +1,12 @@
+/target
+**/*.rs.bk
+Cargo.lock.orig
+.DS_Store
+
+# Never commit real Labcorp data: no report PDFs, portal captures or HAR
+# files. Fixtures are synthetic (tests/fixtures/README.md).
+/captures
+*.har
+*.raw.json
+*.raw.html
+*.pdf
