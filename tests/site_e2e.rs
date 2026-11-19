@@ -16,7 +16,8 @@ use labcorp::session::Session;
 use pk_cli_config::profile::ProfileName;
 use pk_cli_core::CliError;
 use pk_cli_secrets::Secret;
-use pk_med_records::{Header as StreamHeader, Item, RecordsReader, StreamError, Trailer};
+use pk_med_records::version::{decide, Filing};
+use pk_med_records::{Header as StreamHeader, Item, Provenance, RawResource, RecordsReader, StreamError, Trailer};
 use serde_json::Value;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/site");
@@ -60,6 +61,10 @@ struct Plan {
     faults: Vec<Fault>,
     /// The fixture `/protected/patients/current` answers.
     account: &'static str,
+    /// The fixture the results list answers.
+    headers: &'static str,
+    /// The bytes every report PDF answers.
+    pdf: &'static [u8],
 }
 
 struct Server {
@@ -76,6 +81,8 @@ impl Server {
         let plan = Arc::new(Mutex::new(Plan {
             faults: Vec::new(),
             account: "account.json",
+            headers: "headers-all.json",
+            pdf: PDF,
         }));
         let (s, f) = (seen.clone(), plan.clone());
         std::thread::spawn(move || {
@@ -123,6 +130,12 @@ impl Server {
 
     fn account(&self, fixture: &'static str) {
         self.plan.lock().unwrap().account = fixture;
+    }
+
+    fn headers(&self, fixture: &'static str, pdf: &'static [u8]) {
+        let mut plan = self.plan.lock().unwrap();
+        plan.headers = fixture;
+        plan.pdf = pdf;
     }
 }
 
@@ -259,7 +272,7 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, plan: &Mutex<Plan>) {
         "/protected/patients/current" => json(&mut stream, 200, &fixture(plan.account)),
         "/protected/patients/current/linkedAccounts" => json(&mut stream, 200, &fixture("linked-accounts.json")),
         "/protected/patients/current/linkedAccounts/results/headers/all" => {
-            json(&mut stream, 200, &fixture("headers-all.json"))
+            json(&mut stream, 200, &fixture(plan.headers))
         }
         p => {
             let tail = p.rsplit("/results/").next().unwrap_or("");
@@ -272,7 +285,12 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, plan: &Mutex<Plan>) {
                         b"<html><body>dummy error page</body></html>",
                     );
                 } else {
-                    respond(&mut stream, 200, &[("Content-Type", "application/pdf".into())], PDF);
+                    respond(
+                        &mut stream,
+                        200,
+                        &[("Content-Type", "application/pdf".into())],
+                        plan.pdf,
+                    );
                 }
                 return;
             }
@@ -790,7 +808,7 @@ fn a_renewal_failing_mid_export_ends_it_incomplete() {
 }
 
 #[test]
-fn every_resource_is_dated_by_its_read_and_the_pdf_by_its_listed_date() {
+fn every_resource_is_dated_by_when_its_page_was_read() {
     let server = Server::start();
     let kept = Kept::default();
     let e = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
@@ -809,16 +827,68 @@ fn every_resource_is_dated_by_its_read_and_the_pdf_by_its_listed_date() {
         let at = r["meta"]["lastUpdated"]
             .as_str()
             .unwrap_or_else(|| panic!("{} has no lastUpdated", r["id"]));
-        if matches!(r["resourceType"].as_str(), Some("Binary" | "DocumentReference")) {
-            // The report PDF carries the date Labcorp lists it with.
-            assert_eq!(at, "2026-03-05T10:00:00Z", "{}", r["id"]);
-            continue;
-        }
         // Every read time is RFC 3339 UTC from the same clock, so text
         // order is time order.
         assert!(at.ends_with('Z') && at >= pulled, "{}: {at} before {pulled}", r["id"]);
     }
     for kind in ["Organization", "Patient"] {
         assert_eq!(of(&e.resources, kind)[0]["meta"]["lastUpdated"], pulled);
+    }
+}
+
+/// The PDF Labcorp serves while a test is still preliminary, then once the
+/// report is final: other bytes under the same listed report date.
+const PDF_PRELIMINARY: &[u8] = b"%PDF-1.4\n% SYNTHETIC TEST DATA - PRELIMINARY REPORT\n%%EOF\n";
+const PDF_FINAL: &[u8] = b"%PDF-1.4\n% SYNTHETIC TEST DATA - FINAL REPORT, ALL TESTS IN\n%%EOF\n";
+
+/// One resource of an export as medrec files it: its line and provenance.
+fn filed(e: &Exported, id: &str) -> (RawResource, Provenance) {
+    let v = e
+        .resources
+        .iter()
+        .find(|r| r["id"] == id)
+        .unwrap_or_else(|| panic!("no {id}"));
+    let r = RawResource::from_value(v).unwrap();
+    let p = Provenance::from_stream(&e.header, &r, "2026-01-01T00:00:00Z", "medrec-test");
+    (r, p)
+}
+
+#[test]
+fn the_final_report_replaces_the_preliminary_one_in_the_store() {
+    let server = Server::start();
+    let kept = Kept::default();
+    server.headers("headers-all-preliminary.json", PDF_PRELIMINARY);
+    let early = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
+    // A second apart at least: read times are written to the second.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    server.headers("headers-all.json", PDF_FINAL);
+    let late = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
+    for id in [
+        "lcb-SYNR00000001",
+        "lcd-SYNR00000001",
+        "lcr-SYNR00000001",
+        "lco-SYNR00000001-000010-000011",
+    ] {
+        let (held, held_p) = filed(&early, id);
+        let (incoming, incoming_p) = filed(&late, id);
+        let want = if id.starts_with("lcb-") || id.starts_with("lcd-") || id.starts_with("lcr-") {
+            Filing::Replaces
+        } else {
+            // The value itself did not change; only its time moves on.
+            Filing::Refreshed
+        };
+        assert_eq!(decide(&held, &held_p, &incoming, &incoming_p), want, "{id}");
+    }
+    // Read again unchanged, the final PDF only refreshes the copy filed.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    let again = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
+    for id in ["lcb-SYNR00000001", "lcd-SYNR00000001"] {
+        let (held, held_p) = filed(&late, id);
+        let (incoming, incoming_p) = filed(&again, id);
+        assert_eq!(
+            decide(&held, &held_p, &incoming, &incoming_p),
+            Filing::Refreshed,
+            "{id}"
+        );
     }
 }

@@ -41,4 +41,6 @@ tracked file.
 | `site/account.json` | `GET /protected/patients/current` |
 | `site/linked-accounts.json` | `GET /protected/patients/current/linkedAccounts` |
 | `site/headers-all.json` | `GET /protected/patients/current/linkedAccounts/results/headers/all` |
+| `site/headers-all-preliminary.json` | the same, one test of `SYNR00000001` still preliminary |
+| `site/account-alone.json` | `GET /protected/patients/current` for an account with no dependents |
 | `site/result-<id>.json` | `GET /protected/patients/current{scope}/results/<id>` |

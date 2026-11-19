@@ -5,27 +5,22 @@
 `method: "portal"` (medical-common DESIGN.md §1.4). Every resource carries
 `meta.source` `labcorp:portal` and the tag `mapped-from-labcorp-patient`
 (system `https://github.com/piekstra/labcorp-cli/fhir/tag`), and
-`meta.lastUpdated` (DESIGN.md §1.4):
+`meta.lastUpdated`, the time its page was read (DESIGN.md §1.4): a
+result's resources when its detail was read, `Organization` and `Patient`
+the header's `pulled_at`. A later export's version of a resource therefore
+replaces the one filed before when its content changed, and only refreshes
+the filed copy (medical-common's `version::decide`, `Refreshed`) when it
+did not.
 
-- the time its page was read for a result's `Observation`s and
-  `DiagnosticReport` (when its detail was read), and the header's
-  `pulled_at` for `Organization` and `Patient`. A later export's version
-  therefore replaces the one filed before, a corrected value included; one
-  whose content did not change only refreshes the copy filed.
-- for a settled report's PDF (no test still to come or preliminary), its
-  `Binary` and `DocumentReference` carry the date Labcorp lists the report
-  with (`fhir::listed_at`): its `reportDate` as written when it has an
-  offset, else that day, else the collection day, at `00:00:00Z`. A
-  re-export uploads that PDF again only when Labcorp reissues it under a
-  later date. The PDF of a report still changing, and of one with no date
-  at all, carries the read time, so it is uploaded again on every import
-  until it settles.
-
-A settled report Labcorp corrects under the same `reportDate` (or on the
-same day, when it gives the day alone) has a PDF no later than the one
-filed, and medrec keeps the earlier PDF; the corrected values still
-replace theirs, being dated by the read. Whether a correction moves
-`reportDate` is to confirm against a real account.
+The report PDF's `Binary` and `DocumentReference` take the read time too,
+though §1.4 dates a document the site lists by its own date. A report's
+PDF changes while its tests come in, and nothing seen yet says Labcorp
+moves `reportDate` when it does (to confirm against a real account). Under
+an unmoved listed date the final PDF would be no later than the
+preliminary one filed, and would be filed as older; under the read time it
+replaces it (`tests/site_e2e.rs`,
+`the_final_report_replaces_the_preliminary_one_in_the_store`). The cost: an
+unchanged PDF is rewritten in place on each import.
 
 ## Identity
 
