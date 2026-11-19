@@ -1,0 +1,23 @@
+{
+  "id": "SYNP000001",
+  "hashId": "example-hash-0001",
+  "firstName": "Alex",
+  "middleName": null,
+  "lastName": "Example",
+  "dateOfBirth": "1990-01-01",
+  "gender": "FEMALE",
+  "authenticationQuizStatus": "passed",
+  "dependents": [
+    {
+      "relationshipType": "CHILD",
+      "usePrimaryAddressOfPrimaryPatient": true,
+      "dependent": {
+        "id": "SYNP000002",
+        "firstName": "Sam",
+        "lastName": "Example",
+        "dateOfBirth": "2020-01-01",
+        "gender": "MALE"
+      }
+    }
+  ]
+}

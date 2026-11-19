@@ -1,0 +1,24 @@
+[
+  {
+    "patientMasterId": "SYNP000003",
+    "linkedId": "SYNL000003",
+    "recipientLinkedId": null,
+    "firstName": "Jordan",
+    "lastName": "Example",
+    "isMinor": false,
+    "isPrimaryAccountHolder": true,
+    "linkedAcctToCurrentUserStatus": "accepted",
+    "currentUserToLinkedAcctStatus": "not_initiated",
+    "linkedAcctAccess": "results",
+    "linkedAcctRole": "read"
+  },
+  {
+    "patientMasterId": "SYNP000004",
+    "linkedId": "SYNL000004",
+    "firstName": "Alex",
+    "lastName": "Example",
+    "isMinor": false,
+    "linkedAcctToCurrentUserStatus": "initiated",
+    "currentUserToLinkedAcctStatus": "not_initiated"
+  }
+]

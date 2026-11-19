@@ -30,9 +30,21 @@ labcorp profiles add adult1
 labcorp auth login --browser --profile adult1   # sign in in the Chrome window it opens
 labcorp auth status --profile adult1            # stored? captured when? token good until?
 
+labcorp patients list --profile adult1          # the account, its dependents, accounts shared with it
+labcorp results list --profile adult1 --patient <ID> --since 2026-01-01
+labcorp results get <RESULT ID> --profile adult1  # every value, flag and range
+labcorp documents list --profile adult1          # the report PDFs
+labcorp documents download --all -o ~/Archive/Labcorp --profile adult1
+
+labcorp records export --profile adult1 --patient <ID> --ndjson | medrec import --from labcorp
+
 # One read of the portal API, printed as the JSON it answers:
 labcorp api GET /protected/patients/current --profile adult1
 ```
+
+`--patient` takes an id from `patients list`, Labcorp's own id, or a first
+name only one person has; it may be left out when the login shows one
+person. `docs/fhir.md` describes the FHIR the export writes.
 
 There is no default profile: every command that signs in or reads takes
 `--profile <NAME>` (or `LABCORP_PROFILE`), and a lone configured profile is
@@ -56,6 +68,11 @@ that session has ended too, a read is exit 3 naming `auth login --browser
 | `auth status --profile <NAME>` | whether a session is stored and until when its token is good; sends nothing (`auth-status/v1`) |
 | `auth logout --profile <NAME>` | remove the session, then the kept browser profile (`auth-logout/v1`) |
 | `auth reset` | remove every session and the vault's key (`auth-reset/v1`) |
+| `patients list` | everyone the login reads (`patient-list/v1`) |
+| `results list [--patient ID] [--since D] [--until D]` | results, newest collection first (`result-list/v1`) |
+| `results get <ID>` | one result with its values (`result/v1`) |
+| `documents list`, `documents download <ID>\|--all` | the report PDFs (`documents/v1`) |
+| `records export --patient <ID> --ndjson` (or `-o DIR`) | one person's results as `records-stream/v1`; `--since D`, `--no-pdfs` |
 | `api GET <PATH> --profile <NAME>` | one read of the portal API |
 | `config path\|show` | the config file (profile names only; no secret) |
 | `info` | `cli-info/v1` |

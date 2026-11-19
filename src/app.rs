@@ -97,7 +97,7 @@ pub fn run(cli: &Cli) -> Result<(), CliError> {
             source::no_profile(cli, "config")?;
             config(&ctx, cmd)
         }
-        Command::Api(_) => {
+        Command::Patients(_) | Command::Records(_) | Command::Results(_) | Command::Documents(_) | Command::Api(_) => {
             // The command's own arguments first, so a bad one reaches neither
             // the vault nor the site.
             crate::commands::check_args(cli)?;
@@ -140,7 +140,15 @@ pub fn info() -> CliInfo {
             method: "browser-session".into(),
             login_hint: Some(format!("{BIN} auth login --browser --profile <NAME>")),
         },
-        &["profiles", "api", pk_med_records::LOGIN_PROFILES],
+        &[
+            "profiles",
+            "patients",
+            "records",
+            "results",
+            "documents",
+            "api",
+            pk_med_records::LOGIN_PROFILES,
+        ],
     )
     .with_profiles(PROFILES)
 }

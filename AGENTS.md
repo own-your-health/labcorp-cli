@@ -20,9 +20,12 @@ Every `pk-cli-*` stays on the cli-common tag medical-common pins.
 | `src/session.rs` | `SessionStore`: a profile's session in the vault; the only code that knows where it lives |
 | `src/site.rs` | the sign-in: what the capture reads from the Chrome window, and the read that confirms it (`SESSION_CHECK_PATH`, `judge`) |
 | `src/client.rs` | the portal API reads: bearer, pacing, no redirects, answers to exit codes (`judge`), token renewal from Okta's session (`renew`) |
-| `src/commands.rs` | the commands that read as a profile (`check_args` before anything is read) |
+| `src/commands.rs` | the commands that read as a profile (`check_args` before anything is read); `Site`, the reads; `stream`, the export |
+| `src/portal.rs` | the API's answers into the model: people (`household`, `Person::scope`), result headers, result detail |
+| `src/fhir.rs` | the FHIR mapping (`docs/fhir.md`), ids from Labcorp's own, decimals in their written spelling |
 | `src/time.rs` | the clock as Unix seconds and RFC 3339 |
 | `docs/api.md` | how Labcorp data can be reached, Labcorp's own wording, the session, the reads, the traps |
+| `docs/fhir.md` | what the export writes |
 
 ## Medical data rules
 
@@ -92,7 +95,13 @@ with `named_profile_exists_in` and `forget_named_profile_in` under a temp dir.
 - `tests/cli_surface.rs`: every `--help`, exit codes, JSON errors, argument
   checks before anything is read, profile selection, `NO_COLOR`, a per-test
   `XDG_CONFIG_HOME`.
-- `tests/no_personal_data.rs`.
+- `tests/site_e2e.rs`: the reads and the export in-process against a
+  loopback server answering with `tests/fixtures/site/` and playing Okta's
+  renewal: the stream's resources, skips and spelling, the paths of a
+  dependent's and a linked account's results, renewal from an expired
+  token and from a 401, an ended Okta session, a refusal partway.
+- `tests/no_personal_data.rs`: the shapes in every tracked file, and every
+  identity field in the fixtures against `tests/fixtures/README.md`.
 
 `make verify` = fmt-check, clippy, test, smoke. Every `make` target that
 builds a binary signs it (cli-common's `dev-sign.sh`).

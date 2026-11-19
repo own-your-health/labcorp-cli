@@ -82,6 +82,16 @@ fn every_command_renders_help() {
         vec!["profiles", "list", "--help"],
         vec!["profiles", "add", "--help"],
         vec!["profiles", "remove", "--help"],
+        vec!["patients", "--help"],
+        vec!["patients", "list", "--help"],
+        vec!["records", "--help"],
+        vec!["records", "export", "--help"],
+        vec!["results", "--help"],
+        vec!["results", "list", "--help"],
+        vec!["results", "get", "--help"],
+        vec!["documents", "--help"],
+        vec!["documents", "list", "--help"],
+        vec!["documents", "download", "--help"],
         vec!["api", "--help"],
         vec!["config", "--help"],
         vec!["config", "path", "--help"],
@@ -146,6 +156,12 @@ fn a_login_command_without_a_profile_is_a_usage_error() {
         vec!["auth", "status"],
         vec!["auth", "login", "--browser"],
         vec!["auth", "logout"],
+        vec!["patients", "list"],
+        vec!["records", "export", "-o", "unused-dir"],
+        vec!["results", "list"],
+        vec!["results", "get", "SYNR00000001"],
+        vec!["documents", "list"],
+        vec!["documents", "download", "--all"],
         vec!["api", "GET", "/protected/patients/current"],
     ] {
         let out = labcorp().args(&args).arg("--json").assert().code(2);
@@ -215,20 +231,73 @@ fn auth_status_without_a_session_says_so() {
 /// request.
 #[test]
 fn a_read_without_a_session_is_exit_3() {
-    let out = labcorp()
-        .args([
-            "api",
-            "GET",
-            "/protected/patients/current",
-            "--profile",
-            "adult1",
-            "--json",
-        ])
+    for args in [
+        vec!["patients", "list"],
+        vec!["results", "list"],
+        vec!["results", "get", "SYNR00000001"],
+        vec!["documents", "list"],
+        vec!["documents", "download", "--all", "-o", "unused-dir"],
+        vec!["records", "export", "-o", "unused-dir"],
+        vec!["api", "GET", "/protected/patients/current"],
+    ] {
+        let out = labcorp()
+            .args(&args)
+            .args(["--profile", "adult1", "--json"])
+            .assert()
+            .code(3);
+        let e = error_of(&out);
+        assert_eq!(e["error"]["code"], "auth", "{args:?}");
+        assert!(
+            e.to_string().contains("auth login --browser --profile adult1"),
+            "{args:?}"
+        );
+    }
+    // The stream's own errors before its header are the error document's.
+    labcorp()
+        .args(["records", "export", "--ndjson", "--profile", "adult1"])
         .assert()
-        .code(3);
-    let e = error_of(&out);
-    assert_eq!(e["error"]["code"], "auth");
-    assert!(e.to_string().contains("auth login --browser --profile adult1"));
+        .code(3)
+        .stdout(predicate::str::is_empty());
+}
+
+#[test]
+fn records_export_needs_a_destination_and_no_json_with_the_stream() {
+    for args in [
+        vec!["records", "export"],
+        vec!["records", "export", "--ndjson", "--json"],
+        vec!["records", "export", "--ndjson", "-o", "x"],
+        vec!["records", "export", "--ndjson", "--since", "11/19/2026"],
+    ] {
+        labcorp().args(&args).args(["--profile", "adult1"]).assert().code(2);
+    }
+}
+
+#[test]
+fn date_flags_are_iso() {
+    labcorp()
+        .args(["results", "list", "--profile", "adult1", "--since", "2026-13-01"])
+        .assert()
+        .code(2);
+    labcorp()
+        .args(["documents", "list", "--profile", "adult1", "--until", "yesterday"])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn documents_download_needs_an_id_or_all_and_all_needs_a_folder() {
+    labcorp()
+        .args(["documents", "download", "--profile", "adult1"])
+        .assert()
+        .code(2);
+    labcorp()
+        .args(["documents", "download", "x", "--all", "--profile", "adult1"])
+        .assert()
+        .code(2);
+    labcorp()
+        .args(["documents", "download", "--all", "-o", "-", "--profile", "adult1"])
+        .assert()
+        .code(2);
 }
 
 #[test]

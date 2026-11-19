@@ -148,10 +148,42 @@ not yet mapped; `labcorp` sends only `GET`.
 | `/protected/patients/current/invoices/summary` | invoices |
 | `/protected/patients/current/invoices/pdf?documentKey=` | an invoice PDF |
 
-`{scope}` is empty for the account itself, or a dependent's or linked
-account's segment (to confirm).
+The web app reads the list for everyone at once, through
+`/linkedAccounts/results/headers/all`; each header names its patient
+(`pid`, `patientName`). A result's detail and PDF are read under the
+person's scope: empty for the account itself, `/linkedAccounts/{id}` for a
+linked account (its `recipientLinkedId`, else its `linkedId`), and
+`/linkedAccounts` for a dependent the account's record lists
+(`dependents[].dependent`). To confirm against real answers.
+
+From the web app's models:
+
+- a header: `id`, `pid`, `patientName`, `dateOfService`, `reportDate`,
+  `orderedDate`, `orderingProviderName`, `accountName`, `isDetailAvailable`,
+  `hasMinimumDataForPdfRetrieval`, `dashboardCategory` (`new`, `upcoming`,
+  `updated`, `recently_viewed`), `testCodes`, `totalTests`,
+  `completedTests`, `itemStatuses` (per test, a `status`: `FINAL`,
+  `PRELIMINARY`, `UPCOMING`);
+- a detail: `header`, and `orderedItems[]` of `testName`, `testCode`,
+  `summary`, `itemStatus` and `results[]` of `number`, `name`, `value`,
+  `abnormalIndicator`, `referenceRange`, `units`, `status`, `comments`;
+- the account: `id`, `firstName`, `middleName`, `lastName`, `dateOfBirth`,
+  `gender`, `dependents[]` of `{relationshipType, dependent}`;
+- a linked account: `patientMasterId`, `linkedId`, `recipientLinkedId`,
+  `firstName`, `lastName`, `isMinor`, `linkedAcctToCurrentUserStatus` and
+  `currentUserToLinkedAcctStatus` (`accepted` when shared).
 
 ## Traps
+
+- `DELETE /protected/patients/current` deletes the account: the web app's
+  profile page sends it. `labcorp` sends `GET` only, and `labcorp api`
+  refuses every other method before anything is sent.
+- `dateOfService` ends in a `Z` that is not UTC: the web app strips it and
+  shows the lab's local time. `labcorp` keeps the day alone.
+- An abnormal flag of `T` means "Test Not Performed" and `Q` "Quantity Not
+  Sufficient": the value is absent, not abnormal.
+- A result line whose name starts `Please Note:`, `Comment:`, `Disclaimer`,
+  `Interpretation` or `Note:` is a note the web app shows as text.
 
 - The landing page's cookie banner (OneTrust) covers the sign-in button
   until it is answered.

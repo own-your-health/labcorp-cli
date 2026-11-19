@@ -60,10 +60,11 @@ smoke: build
 	@rm -rf "$(SMOKE_CONFIG)"
 	@$(HERMETIC) ./target/debug/$(BIN) -q profiles add smoke >/dev/null
 	@$(HERMETIC) ./target/debug/$(BIN) -q auth status --profile smoke --json >/dev/null
-	@$(HERMETIC) ./target/debug/$(BIN) -q api GET /protected/patients/current --profile smoke --json >/dev/null 2>&1; \
+	@$(HERMETIC) ./target/debug/$(BIN) -q patients list --profile smoke --json >/dev/null 2>&1; \
 		test $$? -eq 3 || { echo "smoke: a read without a session did not exit 3"; exit 1; }
 	@for c in "auth login" "auth status" "auth logout" "auth reset" "profiles list" "profiles add" \
-		"profiles remove" api "config path" "config show"; do \
+		"profiles remove" "patients list" "records export" "results list" "results get" \
+		"documents list" "documents download" api "config path" "config show"; do \
 		./target/debug/$(BIN) $$c --help >/dev/null || exit 1; done
 	@echo "smoke ok"
 
