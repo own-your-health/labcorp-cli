@@ -795,6 +795,16 @@ fn every_resource_is_dated_by_when_its_page_was_read() {
     let kept = Kept::default();
     let e = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
     let pulled = e.header.pulled_at.as_str();
+    for kind in [
+        "Organization",
+        "Patient",
+        "Observation",
+        "DiagnosticReport",
+        "Binary",
+        "DocumentReference",
+    ] {
+        assert!(!of(&e.resources, kind).is_empty(), "no {kind} exported");
+    }
     for r in &e.resources {
         let at = r["meta"]["lastUpdated"]
             .as_str()
