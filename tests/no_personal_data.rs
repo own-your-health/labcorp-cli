@@ -176,6 +176,69 @@ fn no_tracked_file_is_a_raw_capture_or_a_report() {
     }
 }
 
+const PEOPLE: &[&str] = &["Alex", "Sam", "Jordan"];
+
+/// `prefix` then exactly `digits` digits.
+fn shaped(value: &str, prefix: &str, digits: usize) -> bool {
+    value
+        .strip_prefix(prefix)
+        .is_some_and(|d| d.len() == digits && d.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Every identity field the site fixtures carry, by key, wherever it is
+/// nested, holds a dummy shape from `tests/fixtures/README.md`.
+#[test]
+fn identity_fields_in_site_fixtures_use_dummy_values() {
+    fn walk(name: &str, key: &str, v: &serde_json::Value, checked: &mut usize) {
+        match v {
+            serde_json::Value::Object(map) => {
+                for (k, v) in map {
+                    walk(name, k, v, checked);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter().for_each(|v| walk(name, key, v, checked)),
+            serde_json::Value::String(s) if !s.is_empty() => {
+                let example = |s: &str| s.strip_prefix("Example ").is_some_and(|w| !w.is_empty());
+                let ok = match key {
+                    "firstName" => PEOPLE.contains(&s.as_str()),
+                    "lastName" => s == "Example",
+                    "patientName" => s
+                        .strip_suffix(" EXAMPLE")
+                        .is_some_and(|f| PEOPLE.iter().any(|p| p.to_ascii_uppercase() == f)),
+                    "dateOfBirth" => s.ends_with("-01-01"),
+                    "id" | "pid" | "patientMasterId" => shaped(s, "SYNP", 6) || shaped(s, "SYNR", 8),
+                    "linkedId" | "recipientLinkedId" => shaped(s, "SYNL", 6),
+                    "hashId" => s.starts_with("example-hash-"),
+                    "orderingProviderName" | "accountName" => example(s),
+                    "testName" => example(s),
+                    "name" => example(s) || s == "Please Note:",
+                    "testCode" | "number" => {
+                        s.len() == 6 && s.starts_with("0000") && s.bytes().all(|b| b.is_ascii_digit())
+                    }
+                    "comments" => s.starts_with("Synthetic "),
+                    "value" if s.chars().any(char::is_alphabetic) && s.contains(' ') => s.starts_with("Synthetic "),
+                    _ => return,
+                };
+                assert!(ok, "{name}: `{key}` holds `{s}`, not a dummy");
+                *checked += 1;
+            }
+            _ => {}
+        }
+    }
+    let dir = format!("{}/tests/fixtures/site", root());
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.display().to_string();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        walk(&name, "", &v, &mut checked);
+    }
+    assert!(
+        checked >= 70,
+        "only {checked} identity fields found; did the fixtures change?"
+    );
+}
+
 #[test]
 fn the_scanner_flags_real_shapes_and_passes_dummies() {
     for real in [

@@ -1,0 +1,26 @@
+{
+  "header": {
+    "id": "SYNR00000004",
+    "dateOfService": "2025-11-20T07:30:00Z",
+    "reportDate": "2025-11-21T12:00:00Z"
+  },
+  "orderedItems": [
+    {
+      "testName": "Example Single Test E",
+      "testCode": "000030",
+      "itemStatus": "FINAL",
+      "results": [
+        {
+          "number": "000031",
+          "name": "Example Analyte E",
+          "value": "42",
+          "abnormalIndicator": "N",
+          "referenceRange": "10-50",
+          "units": "U/L",
+          "status": "final",
+          "comments": []
+        }
+      ]
+    }
+  ]
+}

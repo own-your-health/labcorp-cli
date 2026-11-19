@@ -45,6 +45,19 @@ pub enum Command {
     /// The Labcorp Patient logins: one profile per account (profile-list/v1).
     #[command(subcommand)]
     Profiles(ProfilesCmd),
+    /// The people the login shows: its own account and the dependents and
+    /// linked accounts it may read (patient-list/v1).
+    #[command(subcommand)]
+    Patients(PatientsCmd),
+    /// Lab results as records-stream/v1, for `medrec import --from labcorp`.
+    #[command(subcommand)]
+    Records(RecordsCmd),
+    /// Lab results, newest first (result-list/v1).
+    #[command(subcommand)]
+    Results(ResultsCmd),
+    /// The lab report PDFs (documents/v1).
+    #[command(subcommand)]
+    Documents(DocumentsCmd),
     /// One read of Labcorp Patient's own API as --profile <NAME>, printed as
     /// the JSON it answers: `GET <PATH>` under
     /// https://portal-api.patient.cws.labcorp.com. Read-only: no other
@@ -121,6 +134,112 @@ pub enum ProfilesCmd {
         #[arg(long)]
         force: bool,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum PatientsCmd {
+    /// List the people (patient-list/v1).
+    #[command(visible_alias = "ls")]
+    List,
+}
+
+#[derive(Args, Debug, Clone)]
+pub struct PatientArg {
+    /// A person: their id from `labcorp patients list`, Labcorp's own id for
+    /// them, or their first name. May be omitted when the login shows one
+    /// person.
+    #[arg(long, value_name = "ID")]
+    pub patient: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum RecordsCmd {
+    /// One person's results as records-stream/v1: a DiagnosticReport per
+    /// result with an Observation per test value, and the report PDF as a
+    /// Binary.
+    Export(ExportArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct ExportArgs {
+    #[command(flatten)]
+    pub who: PatientArg,
+    /// Only results reported or collected on or after this day
+    /// (YYYY-MM-DD), so a result Labcorp reported again since is exported
+    /// again; a result with no date is always exported. `results list
+    /// --since` goes by the collection day alone.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub since: Option<String>,
+    /// Leave the report PDFs out of the stream.
+    #[arg(long)]
+    pub no_pdfs: bool,
+    /// Write the stream to stdout (what `medrec import --from labcorp` runs). The
+    /// stream is the output, so --json with it is a usage error.
+    #[arg(long, conflicts_with = "output")]
+    pub ndjson: bool,
+    /// Write the stream to DIR/records.ndjson instead. Development only: real
+    /// records go straight into medrec.
+    #[arg(short, long, value_name = "DIR")]
+    pub output: Option<PathBuf>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ResultsCmd {
+    /// One person's results, newest collection first (result-list/v1).
+    #[command(visible_alias = "ls")]
+    List(ResultsListArgs),
+    /// One result with its test values (result/v1).
+    Get {
+        #[command(flatten)]
+        who: PatientArg,
+        /// The result's id from `labcorp results list`.
+        id: String,
+    },
+}
+
+#[derive(Args, Debug)]
+pub struct ResultsListArgs {
+    #[command(flatten)]
+    pub who: PatientArg,
+    /// Only results collected on or after this day (YYYY-MM-DD). `records
+    /// export --since` also takes a result reported on or after it.
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub since: Option<String>,
+    /// Only results collected on or before this day (YYYY-MM-DD).
+    #[arg(long, value_name = "YYYY-MM-DD")]
+    pub until: Option<String>,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DocumentsCmd {
+    /// One person's report PDFs, newest first (document-list/v1).
+    #[command(visible_alias = "ls")]
+    List(ResultsListArgs),
+    /// Save one report PDF, or `--all` of them (document-download/v1,
+    /// document-download-batch/v1).
+    #[command(visible_alias = "get")]
+    Download(DownloadArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct DownloadArgs {
+    #[command(flatten)]
+    pub who: PatientArg,
+    /// A document id from `labcorp documents list`.
+    #[arg(required_unless_present = "all", conflicts_with = "all")]
+    pub id: Option<String>,
+    /// Every report PDF. A file of the same name already in the folder is
+    /// kept without being read again (code `exists`), even if Labcorp has
+    /// updated the report since; --overwrite reads and replaces them all.
+    #[arg(long)]
+    pub all: bool,
+    /// The file to write (`-` for stdout), or with --all the folder.
+    #[arg(short, long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+    /// Replace a file that is already there. Without it, one document onto
+    /// an existing file is a usage error (exit 2).
+    #[arg(long)]
+    pub overwrite: bool,
 }
 
 /// `labcorp api GET <PATH>`: read-only, so the method is GET alone.

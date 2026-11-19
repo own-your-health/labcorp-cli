@@ -41,6 +41,16 @@ const MAX_JSON: u64 = 16 * 1024 * 1024;
 /// The most bytes read for one file.
 pub const MAX_FILE: u64 = 48 * 1024 * 1024;
 
+/// Labcorp asked the client to wait: a 429, or an answer with
+/// `Retry-After`. A run of reads stops on it rather than going on asking.
+pub const RATE_LIMITED: Reason = Reason::Provider("rate_limited");
+/// No answer came at all: the connection failed or timed out.
+pub const UNREACHABLE: Reason = Reason::Provider("unreachable");
+/// Renewing the token failed some other way (Okta or its token endpoint
+/// answered an error). The token stays expired, so every later read would
+/// fail too.
+pub const RENEWAL_FAILED: Reason = Reason::Provider("renewal_failed");
+
 /// Where the client sends its requests: the real hosts, or a test server.
 #[derive(Debug, Clone)]
 pub struct Endpoints {
@@ -75,8 +85,11 @@ pub struct Client<'k> {
     session: Session,
     keep: &'k dyn Keep,
     last: Option<Instant>,
-    /// Whether this run renewed the token already.
+    /// Whether this run renewed the token already: a 401 is retried once.
     renewed: bool,
+    /// The first renewal failure. Every later read returns it at once
+    /// instead of asking Okta again.
+    failed: Option<CliError>,
 }
 
 /// An answer to one read: its status, content type and body.
@@ -108,6 +121,7 @@ impl<'k> Client<'k> {
             keep,
             last: None,
             renewed: false,
+            failed: None,
         })
     }
 
@@ -207,16 +221,37 @@ impl<'k> Client<'k> {
         if let Some(ua) = &self.session.user_agent {
             req = req.header(reqwest::header::USER_AGENT, ua.as_str());
         }
-        let resp = req
-            .send()
-            .map_err(|e| CliError::Upstream(format!("GET {} got no answer: {}", site_path(url), e.without_url())))?;
+        let resp = req.send().map_err(|e| {
+            CliError::Upstream(format!("GET {} got no answer: {}", site_path(url), e.without_url()))
+                .because(UNREACHABLE)
+        })?;
         read_answer(resp, max, url)
     }
 
     /// A new access token from Okta's session, the way the web app gets one:
     /// an authorization request with `prompt=none`, then the code exchanged
-    /// with its PKCE verifier. The renewed session is kept at once.
+    /// with its PKCE verifier. The renewed session is kept at once. Every
+    /// failure carries a reason (an ended session's `CredentialRefused`,
+    /// [`RATE_LIMITED`], [`UNREACHABLE`], else [`RENEWAL_FAILED`]) and is
+    /// kept: a client asks Okta again only after a renewal that worked.
     pub fn renew(&mut self) -> Result<(), CliError> {
+        if let Some(e) = &self.failed {
+            return Err(e.clone());
+        }
+        let r = self.renew_once().map_err(|e| {
+            if e.reason().is_some() {
+                e
+            } else {
+                e.because(RENEWAL_FAILED)
+            }
+        });
+        if let Err(e) = &r {
+            self.failed = Some(e.clone());
+        }
+        r
+    }
+
+    fn renew_once(&mut self) -> Result<(), CliError> {
         let profile = self.profile.clone();
         let ended = move || {
             CliError::Auth(format!("Labcorp's sign-in session for profile `{profile}` has ended"))
@@ -250,9 +285,9 @@ impl<'k> Client<'k> {
         if let Some(ua) = &self.session.user_agent {
             req = req.header(reqwest::header::USER_AGENT, ua.as_str());
         }
-        let resp = req
-            .send()
-            .map_err(|e| CliError::Upstream(format!("renewing the token got no answer: {}", e.without_url())))?;
+        let resp = req.send().map_err(|e| {
+            CliError::Upstream(format!("renewing the token got no answer: {}", e.without_url())).because(UNREACHABLE)
+        })?;
         let status = resp.status().as_u16();
         let okta_cookies = merge_set_cookies(okta.expose(), resp.headers());
         let location = resp
@@ -261,7 +296,9 @@ impl<'k> Client<'k> {
             .and_then(|v| v.to_str().ok())
             .map(str::to_string);
         let Some(location) = location.filter(|l| l.starts_with(site::REDIRECT_URI)) else {
-            return Err(if (500..600).contains(&status) || status == 429 {
+            return Err(if status == 429 {
+                CliError::Upstream("renewing the token: Okta answered HTTP 429".into()).because(RATE_LIMITED)
+            } else if (500..600).contains(&status) {
                 CliError::Upstream(format!("renewing the token: Okta answered HTTP {status}"))
             } else {
                 ended()
@@ -288,17 +325,18 @@ impl<'k> Client<'k> {
         if let Some(ua) = &self.session.user_agent {
             req = req.header(reqwest::header::USER_AGENT, ua.as_str());
         }
-        let resp = req
-            .body(http.body.unwrap_or_default())
-            .send()
-            .map_err(|e| CliError::Upstream(format!("the token exchange got no answer: {}", e.without_url())))?;
+        let resp = req.body(http.body.unwrap_or_default()).send().map_err(|e| {
+            CliError::Upstream(format!("the token exchange got no answer: {}", e.without_url())).because(UNREACHABLE)
+        })?;
         let status = resp.status().as_u16();
         let mut body = String::new();
         resp.take(MAX_JSON)
             .read_to_string(&mut body)
             .map_err(|_| CliError::Upstream("the token exchange's answer did not arrive".into()))?;
         if !(200..300).contains(&status) {
-            return Err(if status >= 500 || status == 429 {
+            return Err(if status == 429 {
+                CliError::Upstream("the token exchange answered HTTP 429".into()).because(RATE_LIMITED)
+            } else if status >= 500 {
                 CliError::Upstream(format!("the token exchange answered HTTP {status}"))
             } else {
                 ended()
@@ -306,8 +344,15 @@ impl<'k> Client<'k> {
         }
         let token = TokenResponse::parse(&body)?;
         let now = crate::time::now();
+        let expires_at = now + token.expires_in.unwrap_or(3600);
+        if expires_at <= now + SKEW {
+            return Err(CliError::Upstream(format!(
+                "Okta's renewed token lasts {} s, too short to use",
+                expires_at - now
+            )));
+        }
         self.session.access_token = token.access_token;
-        self.session.expires_at = now + token.expires_in.unwrap_or(3600);
+        self.session.expires_at = expires_at;
         self.session.okta_cookies = okta_cookies.map(Secret::new).or(Some(okta));
         self.session.renewed_at = Some(crate::time::rfc3339(now));
         self.keep.keep(&self.profile, &self.session)?;
@@ -387,9 +432,11 @@ fn read_answer(resp: Response, max: u64, url: &str) -> Result<Answer, CliError> 
     })
 }
 
-/// What an answer means: a 2xx passes; a 401 after renewal and a 403 are
-/// exit 3, a 404 exit 4, anything else exit 5. The errors carry the path
-/// without its query, never the body.
+/// What an answer means: a 2xx passes; a 401 after renewal
+/// (`CredentialRefused`) and a 403 (`Forbidden`) are exit 3, a 404 exit 4,
+/// anything else exit 5, a 429 or an answer asking to wait tagged
+/// [`RATE_LIMITED`]. The errors carry the path without its query, never the
+/// body.
 pub fn judge(a: &Answer, path: &str, profile: &ProfileName) -> Result<(), CliError> {
     let what = format!("GET {}", site_path(path));
     match a.status {
@@ -399,14 +446,20 @@ pub fn judge(a: &Answer, path: &str, profile: &ProfileName) -> Result<(), CliErr
                 .because(Reason::CredentialRefused)
                 .with_remedy(format!("{BIN} auth login --browser --profile {profile} --overwrite")),
         ),
-        403 => Err(CliError::Auth(format!(
-            "{what} answered 403: the account may not read this"
-        ))),
+        403 => Err(
+            CliError::Auth(format!("{what} answered 403: the account may not read this")).because(Reason::Forbidden),
+        ),
         404 => Err(CliError::NotFound(format!("{what} answered 404"))),
         s => {
             let mut e = CliError::Upstream(format!("{what} answered HTTP {s}"));
+            if s == 429 || a.retry_after.is_some() {
+                e = e.because(RATE_LIMITED);
+            }
             if let Some(after) = a.retry_after {
-                e = e.with_remedy(format!("Labcorp asked to wait {} s", after.as_secs()));
+                e = e.with_remedy(format!(
+                    "Labcorp asked to wait {} s; run it again after that",
+                    after.as_secs()
+                ));
             }
             Err(e)
         }
@@ -428,6 +481,32 @@ pub fn site_path(url: &str) -> &str {
 mod tests {
     use super::*;
     use reqwest::header::HeaderValue;
+
+    #[test]
+    fn judge_types_each_refusal() {
+        let profile = ProfileName::parse("adult1").unwrap();
+        let answer = |status, retry_after| Answer {
+            status,
+            content_type: Some("application/json".into()),
+            body: Vec::new(),
+            retry_after,
+        };
+        let e = |status, retry_after| judge(&answer(status, retry_after), "/p?x=1", &profile).unwrap_err();
+        assert!(judge(&answer(200, None), "/p", &profile).is_ok());
+        assert_eq!(e(401, None).reason(), Some(Reason::CredentialRefused));
+        assert_eq!(e(401, None).exit_code(), 3);
+        assert_eq!(e(403, None).reason(), Some(Reason::Forbidden));
+        assert_eq!(e(403, None).exit_code(), 3);
+        assert_eq!(e(404, None).exit_code(), 4);
+        assert_eq!(e(404, None).reason(), None);
+        assert_eq!(e(429, None).reason(), Some(RATE_LIMITED));
+        assert_eq!(e(429, None).exit_code(), 5);
+        let wait = e(503, Some(Duration::from_secs(30)));
+        assert_eq!(wait.reason(), Some(RATE_LIMITED));
+        assert!(wait.remedy().unwrap().contains("30 s"));
+        assert_eq!(e(503, None).reason(), None);
+        assert!(!e(500, None).message().contains("x=1"));
+    }
 
     #[test]
     fn set_cookies_replace_add_and_drop() {

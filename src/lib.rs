@@ -6,6 +6,8 @@ pub mod auth;
 pub mod cli;
 pub mod client;
 pub mod commands;
+pub mod fhir;
+pub mod portal;
 pub mod session;
 pub mod site;
 pub mod source;
