@@ -1246,7 +1246,7 @@ dependencies = [
 
 [[package]]
 name = "labcorp-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "assert_cmd",
  "base64 0.22.1",
@@ -1634,8 +1634,8 @@ dependencies = [
 
 [[package]]
 name = "pk-med-fhir"
-version = "0.6.3"
-source = "git+https://github.com/piekstra/medical-common?tag=v0.6.3#0ebd89b797d5adbc660e23b8e444cf9fbf9d03fa"
+version = "0.6.4"
+source = "git+https://github.com/piekstra/medical-common?tag=v0.6.4#87e599f7ad62cfa69b7a4a09489e1e9ce8938f69"
 dependencies = [
  "base64 0.22.1",
  "pk-cli-core",
@@ -1646,8 +1646,8 @@ dependencies = [
 
 [[package]]
 name = "pk-med-records"
-version = "0.6.3"
-source = "git+https://github.com/piekstra/medical-common?tag=v0.6.3#0ebd89b797d5adbc660e23b8e444cf9fbf9d03fa"
+version = "0.6.4"
+source = "git+https://github.com/piekstra/medical-common?tag=v0.6.4#87e599f7ad62cfa69b7a4a09489e1e9ce8938f69"
 dependencies = [
  "pk-cli-core",
  "pk-med-fhir",

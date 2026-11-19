@@ -5,10 +5,18 @@
 `method: "portal"` (medical-common DESIGN.md §1.4). Every resource carries
 `meta.source` `labcorp:portal` and the tag `mapped-from-labcorp-patient`
 (system `https://github.com/piekstra/labcorp-cli/fhir/tag`), and
-`meta.lastUpdated` the time its page was read (DESIGN.md §1.4): a result's
-resources when its detail was read, `Organization` and `Patient` the
-header's `pulled_at`. A later export's version of a resource therefore
-replaces the one filed before, a corrected result included.
+`meta.lastUpdated` (DESIGN.md §1.4):
+
+- the time its page was read for a result's `Observation`s and
+  `DiagnosticReport` (when its detail was read), and the header's
+  `pulled_at` for `Organization` and `Patient`. A later export's version
+  therefore replaces the one filed before, a corrected value included; one
+  whose content did not change only refreshes the copy filed.
+- the date Labcorp lists the report with for the report PDF's `Binary` and
+  `DocumentReference` (`fhir::listed_at`): its `reportDate` as written when
+  it has an offset, else that day, else the collection day, at `00:00:00Z`.
+  A re-export uploads the PDF again only when Labcorp reissues the report
+  with a new date.
 
 ## Identity
 

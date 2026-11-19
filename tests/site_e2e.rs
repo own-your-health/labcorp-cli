@@ -790,7 +790,7 @@ fn a_renewal_failing_mid_export_ends_it_incomplete() {
 }
 
 #[test]
-fn every_resource_is_dated_by_when_its_page_was_read() {
+fn every_resource_is_dated_by_its_read_and_the_pdf_by_its_listed_date() {
     let server = Server::start();
     let kept = Kept::default();
     let e = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
@@ -809,8 +809,13 @@ fn every_resource_is_dated_by_when_its_page_was_read() {
         let at = r["meta"]["lastUpdated"]
             .as_str()
             .unwrap_or_else(|| panic!("{} has no lastUpdated", r["id"]));
-        // Every time is RFC 3339 UTC from the same clock, so text order is
-        // time order.
+        if matches!(r["resourceType"].as_str(), Some("Binary" | "DocumentReference")) {
+            // The report PDF carries the date Labcorp lists it with.
+            assert_eq!(at, "2026-03-05T10:00:00Z", "{}", r["id"]);
+            continue;
+        }
+        // Every read time is RFC 3339 UTC from the same clock, so text
+        // order is time order.
         assert!(at.ends_with('Z') && at >= pulled, "{}: {at} before {pulled}", r["id"]);
     }
     for kind in ["Organization", "Patient"] {
