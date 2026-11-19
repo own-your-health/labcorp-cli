@@ -49,10 +49,14 @@ pub fn entries(v: &Value) -> Vec<&Value> {
 /// day as written, whatever offset follows), or `MM/DD/YYYY`.
 pub fn day(s: &str) -> Option<String> {
     let s = s.trim();
-    if s.len() >= 10 && s.as_bytes()[4] == b'-' && s.as_bytes()[7] == b'-' {
-        return dates::parse_iso(&s[..10]).ok().map(dates::fmt_iso);
+    // `get`, not indexing: the site's text, not ours, decides where a
+    // character boundary falls.
+    let head = s.get(..10).unwrap_or(s);
+    let b = head.as_bytes();
+    if b.len() == 10 && b[4] == b'-' && b[7] == b'-' {
+        return dates::parse_iso(head).ok().map(dates::fmt_iso);
     }
-    dates::parse_mm_slash_dd_yyyy(s.get(..10).unwrap_or(s)).map(dates::fmt_iso)
+    dates::parse_mm_slash_dd_yyyy(head).map(dates::fmt_iso)
 }
 
 /// An RFC 3339 instant, when `s` is a date-time with an offset or `Z`.
@@ -425,6 +429,11 @@ mod tests {
         assert_eq!(day("2026-03-04").as_deref(), Some("2026-03-04"));
         assert_eq!(day("03/04/2026").as_deref(), Some("2026-03-04"));
         assert_eq!(day("soon"), None);
+        // A character across byte 10 is no date, not a panic.
+        assert_eq!(day("2026-03-0\u{e9}"), None);
+        assert_eq!(day("03/04/202\u{e9}"), None);
+        assert_eq!(day("2026-03-04\u{e9}").as_deref(), Some("2026-03-04"));
+        assert_eq!(instant("2026-03-0\u{e9}T00:00:00Z"), None);
         assert_eq!(instant("2026-03-04T09:15:00Z").as_deref(), Some("2026-03-04T09:15:00Z"));
         assert_eq!(
             instant("2026-03-04T09:15:00-05:00").as_deref(),

@@ -1,0 +1,11 @@
+{
+  "id": "SYNP000001",
+  "hashId": "example-hash-0001",
+  "firstName": "Alex",
+  "middleName": null,
+  "lastName": "Example",
+  "dateOfBirth": "1990-01-01",
+  "gender": "FEMALE",
+  "authenticationQuizStatus": "passed",
+  "dependents": []
+}

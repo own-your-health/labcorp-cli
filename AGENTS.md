@@ -79,7 +79,16 @@ consent, macOS dialog and texted code.
 Be gentle with it: one request at a time, at least `client::PACE` apart, no
 bulk crawling, no retry beyond the one after a renewal. Every URL is built
 from the fixed API origin; `api` refuses another host. A 401 after renewal
-and a 403 are exit 3, 404 is 4, the rest 5.
+(`Reason::CredentialRefused`) and a 403 (`Reason::Forbidden`) are exit 3,
+404 is 4, the rest 5; a 429 or an answer with `Retry-After` is tagged
+`client::RATE_LIMITED` and no answer `client::UNREACHABLE`.
+
+A run of reads (`records export`, `documents download --all`) stops at the
+first failure every later read would meet too (`commands::ends_run`: a
+refused session, a request to wait, no answer) and skips anything else,
+a 403 included, with its code. A result is filed only under the person its
+`pid` names (`commands::owner`); one naming nobody the login shows is left
+out, never given to the only person.
 
 ## Tests are offline, always
 
@@ -99,7 +108,9 @@ with `named_profile_exists_in` and `forget_named_profile_in` under a temp dir.
   loopback server answering with `tests/fixtures/site/` and playing Okta's
   renewal: the stream's resources, skips and spelling, the paths of a
   dependent's and a linked account's results, renewal from an expired
-  token and from a 401, an ended Okta session, a refusal partway.
+  token and from a 401, an ended Okta session, a refusal partway, a 403 on
+  one result, a 429, `--since`, and a result whose `pid` names nobody in a
+  one-person household.
 - `tests/no_personal_data.rs`: the shapes in every tracked file, and every
   identity field in the fixtures against `tests/fixtures/README.md`.
 

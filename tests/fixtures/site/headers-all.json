@@ -12,10 +12,20 @@
     "hasMinimumDataForPdfRetrieval": true,
     "dashboardCategory": "new",
     "lastViewedDate": null,
-    "testCodes": ["000001", "000010"],
+    "testCodes": [
+      "000001",
+      "000010"
+    ],
     "totalTests": 2,
     "completedTests": 2,
-    "itemStatuses": { "000001": { "status": "FINAL" }, "000010": { "status": "FINAL" } }
+    "itemStatuses": {
+      "000001": {
+        "status": "FINAL"
+      },
+      "000010": {
+        "status": "FINAL"
+      }
+    }
   },
   {
     "id": "SYNR00000002",
@@ -28,10 +38,16 @@
     "isDetailAvailable": false,
     "hasMinimumDataForPdfRetrieval": false,
     "dashboardCategory": "upcoming",
-    "testCodes": ["000020"],
+    "testCodes": [
+      "000020"
+    ],
     "totalTests": 1,
     "completedTests": 0,
-    "itemStatuses": { "000020": { "status": "UPCOMING" } }
+    "itemStatuses": {
+      "000020": {
+        "status": "UPCOMING"
+      }
+    }
   },
   {
     "id": "SYNR00000003",
@@ -44,10 +60,16 @@
     "isDetailAvailable": true,
     "hasMinimumDataForPdfRetrieval": true,
     "dashboardCategory": "recently_viewed",
-    "testCodes": ["000030"],
+    "testCodes": [
+      "000030"
+    ],
     "totalTests": 1,
     "completedTests": 1,
-    "itemStatuses": { "000030": { "status": "FINAL" } }
+    "itemStatuses": {
+      "000030": {
+        "status": "FINAL"
+      }
+    }
   },
   {
     "id": "SYNR00000004",
@@ -60,10 +82,16 @@
     "isDetailAvailable": true,
     "hasMinimumDataForPdfRetrieval": false,
     "dashboardCategory": "recently_viewed",
-    "testCodes": ["000030"],
+    "testCodes": [
+      "000030"
+    ],
     "totalTests": 1,
     "completedTests": 1,
-    "itemStatuses": { "000030": { "status": "FINAL" } }
+    "itemStatuses": {
+      "000030": {
+        "status": "FINAL"
+      }
+    }
   },
   {
     "id": "SYNR00000005",
@@ -76,9 +104,37 @@
     "isDetailAvailable": true,
     "hasMinimumDataForPdfRetrieval": false,
     "dashboardCategory": "recently_viewed",
-    "testCodes": ["000030"],
+    "testCodes": [
+      "000030"
+    ],
     "totalTests": 1,
     "completedTests": 1,
-    "itemStatuses": { "000030": { "status": "FINAL" } }
+    "itemStatuses": {
+      "000030": {
+        "status": "FINAL"
+      }
+    }
+  },
+  {
+    "id": "SYNR00000006",
+    "pid": "SYNP000002",
+    "patientName": "SAM EXAMPLE",
+    "dateOfService": null,
+    "reportDate": null,
+    "orderingProviderName": "Example Pediatrician",
+    "accountName": "Example Pediatrics",
+    "isDetailAvailable": false,
+    "hasMinimumDataForPdfRetrieval": false,
+    "dashboardCategory": "upcoming",
+    "testCodes": [
+      "000030"
+    ],
+    "totalTests": 1,
+    "completedTests": 0,
+    "itemStatuses": {
+      "000030": {
+        "status": "UPCOMING"
+      }
+    }
   }
 ]

@@ -164,7 +164,10 @@ pub enum RecordsCmd {
 pub struct ExportArgs {
     #[command(flatten)]
     pub who: PatientArg,
-    /// Only results collected on or after this day (YYYY-MM-DD).
+    /// Only results reported or collected on or after this day
+    /// (YYYY-MM-DD), so a result Labcorp reported again since is exported
+    /// again; a result with no date is always exported. `results list
+    /// --since` goes by the collection day alone.
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub since: Option<String>,
     /// Leave the report PDFs out of the stream.
@@ -198,7 +201,8 @@ pub enum ResultsCmd {
 pub struct ResultsListArgs {
     #[command(flatten)]
     pub who: PatientArg,
-    /// Only results collected on or after this day (YYYY-MM-DD).
+    /// Only results collected on or after this day (YYYY-MM-DD). `records
+    /// export --since` also takes a result reported on or after it.
     #[arg(long, value_name = "YYYY-MM-DD")]
     pub since: Option<String>,
     /// Only results collected on or before this day (YYYY-MM-DD).

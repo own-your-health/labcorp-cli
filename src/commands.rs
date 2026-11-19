@@ -9,6 +9,7 @@ use pk_cli_core::private_file::{self, Replace};
 use pk_cli_core::{output, CliError, Paged, Reason};
 use pk_cli_documents::{fs_safe, verify_pdf, Document, DownloadBatch, SavedDocument, SkippedDocument};
 use pk_med_records::dto::{kind, method, relationship};
+use pk_med_records::stream::skip;
 use pk_med_records::{
     create_export_file, patient_list, Finished, Header as StreamHeader, Organization, PatientContext, RawResource,
     RecordsExport, RecordsWriter, Skip, Source, Trailer,
@@ -17,7 +18,7 @@ use serde_json::{json, Value};
 
 use crate::app::Ctx;
 use crate::cli::*;
-use crate::client::{Client, Endpoints};
+use crate::client::{Client, Endpoints, RATE_LIMITED, UNREACHABLE};
 use crate::fhir;
 use crate::portal::{self, Detail, Header, Kind, Person};
 use crate::session::SessionStore;
@@ -26,6 +27,23 @@ use crate::session::SessionStore;
 pub const NOT_READY: &str = "not_ready";
 /// A report PDF that failed `verify_pdf`.
 pub const VERIFY_FAILED: Reason = Reason::Provider("verify_failed");
+/// A `documents download --all` skip's code for a report left unread
+/// because the batch stopped.
+pub const NOT_READ: &str = "not_read";
+/// piekstra-cli/1's exit code for a 404.
+const EXIT_NOT_FOUND: i32 = 4;
+
+/// Whether a failed read stops a run of reads (an export, `download --all`)
+/// instead of skipping its one result: the session was refused, Labcorp
+/// asked to wait, or it did not answer. Each would fail every later read
+/// too. A 403 (`Forbidden`) is about one result and is skipped.
+pub fn ends_run(e: &CliError) -> bool {
+    matches!(
+        e.reason(),
+        Some(Reason::CredentialRefused | Reason::NoCredential | Reason::ClientBlocked)
+    ) || e.reason() == Some(RATE_LIMITED)
+        || e.reason() == Some(UNREACHABLE)
+}
 
 /// The command's own arguments, checked before the vault or the site is
 /// touched.
@@ -80,7 +98,7 @@ pub(crate) fn run(ctx: &Ctx, profile: &ProfileName) -> Result<(), CliError> {
     let store = SessionStore::open()?;
     let session = store.load(profile)?;
     let client = Client::new(profile, session, &store, Endpoints::default())?;
-    let mut site = Site { client };
+    let mut site = Site::new(client, ctx.quiet());
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     match &ctx.cli.command {
@@ -93,7 +111,14 @@ pub(crate) fn run(ctx: &Ctx, profile: &ProfileName) -> Result<(), CliError> {
         Command::Results(ResultsCmd::List(args)) => results_list(ctx, &mut site, args),
         Command::Results(ResultsCmd::Get { who, id }) => results_get(ctx, &mut site, who, id),
         Command::Documents(DocumentsCmd::List(args)) => documents_list(ctx, &mut site, args),
-        Command::Documents(DocumentsCmd::Download(args)) => documents_download(ctx, &mut site, args, &mut out),
+        Command::Documents(DocumentsCmd::Download(args)) => {
+            let code = documents_download(ctx, &mut site, args, &mut out)?;
+            if code != 0 {
+                let _ = out.flush();
+                std::process::exit(code);
+            }
+            Ok(())
+        }
         Command::Records(RecordsCmd::Export(args)) => {
             let code = export(ctx, &mut site, args, &mut out)?;
             if code != 0 {
@@ -111,16 +136,43 @@ pub(crate) fn run(ctx: &Ctx, profile: &ProfileName) -> Result<(), CliError> {
 /// The reads labcorp makes of the portal API (docs/api.md, "Reads").
 pub struct Site<'k> {
     pub client: Client<'k>,
+    /// What the reads left out that the person should know, also printed
+    /// to stderr unless `quiet`.
+    pub warnings: Vec<String>,
+    quiet: bool,
 }
 
-impl Site<'_> {
-    /// Everyone the account reads. Linked accounts the API does not serve
-    /// (404) are none.
+impl<'k> Site<'k> {
+    pub fn new(client: Client<'k>, quiet: bool) -> Site<'k> {
+        Site {
+            client,
+            warnings: Vec::new(),
+            quiet,
+        }
+    }
+
+    fn warn(&mut self, msg: String) {
+        if !self.quiet {
+            eprintln!("warning: {msg}");
+        }
+        self.warnings.push(msg);
+    }
+
+    /// Everyone the account reads. When the API answers 404 for the linked
+    /// accounts, the account and its dependents are read without them, with
+    /// a warning.
     pub fn household(&mut self) -> Result<Vec<Person>, CliError> {
         let account = self.client.get_json("/protected/patients/current")?;
         let linked = match self.client.get_json("/protected/patients/current/linkedAccounts") {
             Ok(v) => v,
-            Err(e) if e.exit_code() == 4 => Value::Array(Vec::new()),
+            Err(e) if e.exit_code() == EXIT_NOT_FOUND => {
+                self.warn(
+                    "Labcorp answered 404 for the accounts shared with this login; \
+                     reading the account and its dependents only"
+                        .into(),
+                );
+                Value::Array(Vec::new())
+            }
             Err(e) => return Err(e),
         };
         portal::household(&account, &linked)
@@ -282,13 +334,13 @@ fn ids(people: &[Person]) -> String {
     people.iter().map(fhir::patient_id).collect::<Vec<_>>().join(", ")
 }
 
-/// Whose result a header is: the person its `pid` names, else the one its
-/// patient name names, else the only person.
+/// Whose result a header is: the person its `pid` names. A header with a
+/// `pid` that names nobody this login shows has no owner, so it is never
+/// filed under someone else. Only a header with no `pid` falls back to the
+/// one person its patient name names, else the only person.
 pub fn owner<'a>(people: &'a [Person], h: &Header) -> Option<&'a Person> {
     if let Some(pid) = &h.patient_id {
-        if let Some(p) = people.iter().find(|p| &p.id == pid) {
-            return Some(p);
-        }
+        return people.iter().find(|p| &p.id == pid);
     }
     if let Some(name) = &h.patient_name {
         let hits: Vec<&Person> = people
@@ -413,10 +465,22 @@ fn find_header<'a>(headers: &'a [Header], id: &str) -> Result<&'a Header, CliErr
         })
 }
 
-/// The person whose result `h` is: `--patient`'s, else its owner.
+/// The person whose result `h` is: its owner, or `--patient`'s when it has
+/// none. A `--patient` naming someone else than its owner is refused.
 fn reader<'a>(people: &'a [Person], who: &PatientArg, h: &Header) -> Result<&'a Person, CliError> {
     match who.patient {
-        Some(_) => one(people, who),
+        Some(_) => {
+            let p = one(people, who)?;
+            match owner(people, h) {
+                Some(o) if o.id != p.id => Err(CliError::Usage(format!(
+                    "result {} is {}'s, not {}'s",
+                    h.id,
+                    fhir::patient_id(o),
+                    fhir::patient_id(p)
+                ))),
+                _ => Ok(p),
+            }
+        }
         None => owner(people, h).ok_or_else(|| {
             CliError::Usage(format!(
                 "result {} names no person this login shows; give --patient <ID> (`{BIN} patients list`)",
@@ -508,7 +572,7 @@ fn documents_list(ctx: &Ctx, site: &mut Site, args: &ResultsListArgs) -> Result<
     Ok(())
 }
 
-fn documents_download(ctx: &Ctx, site: &mut Site, args: &DownloadArgs, out: &mut dyn Write) -> Result<(), CliError> {
+fn documents_download(ctx: &Ctx, site: &mut Site, args: &DownloadArgs, out: &mut dyn Write) -> Result<i32, CliError> {
     let people = site.household()?;
     let headers = site.headers()?;
     if args.all {
@@ -531,6 +595,7 @@ fn documents_download(ctx: &Ctx, site: &mut Site, args: &DownloadArgs, out: &mut
     match target {
         None => out
             .write_all(&bytes)
+            .map(|()| 0)
             .map_err(|e| CliError::Other(format!("writing stdout: {e}"))),
         Some(path) => {
             write_private(&path, &bytes, args.overwrite)?;
@@ -540,22 +605,24 @@ fn documents_download(ctx: &Ctx, site: &mut Site, args: &DownloadArgs, out: &mut
             } else {
                 ctx.note(&format!("saved {}", saved.path));
             }
-            Ok(())
+            Ok(0)
         }
     }
 }
 
 /// `documents download --all`: every report PDF of the people `--patient`
 /// selects into one folder. A file already there is kept (`exists`); a
-/// report that cannot be read is skipped with its code; a refused session
-/// stops the batch.
+/// report that cannot be read is skipped with its code. A failure that
+/// would fail every later read too ([`ends_run`]) stops the batch: the
+/// reports not read are skipped as [`NOT_READ`], the batch is printed, and
+/// the exit code is the failure's.
 fn download_all(
     ctx: &Ctx,
     site: &mut Site,
     people: &[Person],
     headers: Vec<Header>,
     args: &DownloadArgs,
-) -> Result<(), CliError> {
+) -> Result<i32, CliError> {
     let list = ResultsListArgs {
         who: args.who.clone(),
         since: None,
@@ -566,8 +633,14 @@ fn download_all(
     std::fs::create_dir_all(&dir).map_err(|e| CliError::Other(format!("creating {}: {e}", dir.display())))?;
     let mut saved = Vec::new();
     let mut skipped = Vec::new();
+    let mut stopped: Option<CliError> = None;
     for (h, p) in rows.iter().filter(|(h, _)| h.pdf_available) {
         let doc = document(h);
+        if let Some(e) = &stopped {
+            let why = format!("not read: the batch stopped ({})", e.message());
+            skipped.push(SkippedDocument::new(doc.id, why).with_code(NOT_READ));
+            continue;
+        }
         let Some(p) = p else {
             skipped.push(SkippedDocument::new(doc.id, "names no person this login shows").with_code("no_owner"));
             continue;
@@ -586,7 +659,10 @@ fn download_all(
                     bytes.len() as u64,
                 ));
             }
-            Err(e) if e.exit_code() == 3 => return Err(e),
+            Err(e) if ends_run(&e) => {
+                skipped.push(SkippedDocument::new(doc.id, e.message()).with_code(NOT_READ));
+                stopped = Some(e);
+            }
             Err(e) => skipped.push(SkippedDocument::new(doc.id, e.message()).with_code(skip_code(&e))),
         }
     }
@@ -605,16 +681,21 @@ fn download_all(
         }
         ctx.note(&note);
     }
-    Ok(())
+    Ok(match stopped {
+        Some(e) => {
+            ctx.note(&format!("stopped: {e}"));
+            e.exit_code()
+        }
+        None => 0,
+    })
 }
 
 /// documents/v1's and the stream's skip code for a file that failed.
 fn skip_code(e: &CliError) -> &'static str {
-    if e.reason() == Some(VERIFY_FAILED) {
-        return pk_cli_documents::SKIP_VERIFY_FAILED;
-    }
-    match e.exit_code() {
-        4 => pk_cli_documents::SKIP_NO_FILE,
+    match e.reason() {
+        Some(r) if r == VERIFY_FAILED => pk_cli_documents::SKIP_VERIFY_FAILED,
+        Some(Reason::Forbidden) => skip::FORBIDDEN,
+        _ if e.exit_code() == EXIT_NOT_FOUND => pk_cli_documents::SKIP_NO_FILE,
         _ => pk_cli_documents::SKIP_UPSTREAM,
     }
 }
@@ -696,11 +777,12 @@ fn export(ctx: &Ctx, site: &mut Site, args: &ExportArgs, out: &mut dyn Write) ->
 
 /// One person's results as records-stream/v1, streamed as they are read:
 /// the lab and the person, then each result (with `since`, those reported
-/// or collected on or after it) with its values and, with `pdfs`, its
-/// report PDF. A result with nothing reported yet is skipped
-/// ([`NOT_READY`]); one whose detail or PDF fails is skipped with the
-/// failure's code. A refused session ends the stream incomplete, its error
-/// in the trailer.
+/// or collected on or after it, and those with no date) with its values
+/// and, with `pdfs`, its report PDF. A result with nothing reported yet is
+/// skipped ([`NOT_READY`]); one whose detail or PDF fails is skipped with
+/// the failure's code (`forbidden` for a 403). A failure that would fail
+/// every later read too ([`ends_run`]: a refused session, a request to
+/// wait, no answer) ends the stream incomplete, its error in the trailer.
 pub fn stream(
     site: &mut Site,
     people: &[Person],
@@ -710,10 +792,17 @@ pub fn stream(
     pdfs: bool,
     out: &mut dyn Write,
 ) -> Result<Finished, CliError> {
+    let unowned = headers.iter().filter(|h| owner(people, h).is_none()).count();
+    if unowned > 0 {
+        site.warn(format!(
+            "{unowned} result(s) name a person this login does not show and are left out \
+             (`{BIN} results list` lists them)"
+        ));
+    }
     let mut selected: Vec<Header> = headers
         .into_iter()
         .filter(|h| owner(people, h).is_some_and(|o| o.id == p.id))
-        .filter(|h| since.is_none_or(|s| h.changed_day().is_some_and(|d| d.as_str() >= s)))
+        .filter(|h| since.is_none_or(|s| h.changed_day().is_none_or(|d| d.as_str() >= s)))
         .collect();
     selected.sort_by(|a, b| a.service_day().cmp(&b.service_day()).then_with(|| a.id.cmp(&b.id)));
     let mut w = RecordsWriter::start(out, &stream_header(p, since))?;
@@ -733,7 +822,7 @@ pub fn stream(
             }
             let d = match site.detail(p, h) {
                 Ok(d) => d,
-                Err(e) if e.exit_code() == 3 => return Err(e),
+                Err(e) if ends_run(&e) => return Err(e),
                 Err(e) => {
                     w.skip(Skip::from_error("DiagnosticReport", &rid, &e));
                     continue;
@@ -742,7 +831,7 @@ pub fn stream(
             let pdf = if pdfs && h.pdf_available {
                 match site.pdf(p, h) {
                     Ok(bytes) => Some(bytes),
-                    Err(e) if e.exit_code() == 3 => return Err(e),
+                    Err(e) if ends_run(&e) => return Err(e),
                     Err(e) => {
                         w.skip(Skip::resource("Binary", fhir::binary_id(h), skip_code(&e), e.message()));
                         None
@@ -808,6 +897,44 @@ mod tests {
         );
         assert!(owner(&people, &h(json!({ "id": "r" }))).is_none());
         assert_eq!(owner(&people[..1], &h(json!({ "id": "r" }))).unwrap().id, "1");
+        // A `pid` naming nobody here is nobody's: not the only person's,
+        // not the one its name names.
+        let stranger = h(json!({ "id": "r", "pid": "9", "patientName": "ALEX EXAMPLE" }));
+        assert!(owner(&people[..1], &stranger).is_none());
+        assert!(owner(&people, &stranger).is_none());
+    }
+
+    #[test]
+    fn patient_cannot_claim_someone_elses_result() {
+        let people = [person("1", "Alex", Kind::Account), person("2", "Sam", Kind::Linked)];
+        let h = |v: Value| Header::read(&v).unwrap();
+        let sams = h(json!({ "id": "r", "pid": "2" }));
+        assert_eq!(reader(&people, &who(None), &sams).unwrap().id, "2");
+        assert_eq!(reader(&people, &who(Some("Sam")), &sams).unwrap().id, "2");
+        assert_eq!(reader(&people, &who(Some("Alex")), &sams).err().unwrap().exit_code(), 2);
+        // With no owner, --patient says whose it is.
+        let nobodys = h(json!({ "id": "r", "pid": "9" }));
+        assert_eq!(reader(&people, &who(None), &nobodys).err().unwrap().exit_code(), 2);
+        assert_eq!(reader(&people, &who(Some("Alex")), &nobodys).unwrap().id, "1");
+    }
+
+    #[test]
+    fn a_run_stops_only_on_what_fails_every_later_read() {
+        let refused = CliError::Auth("x".into()).because(Reason::CredentialRefused);
+        let forbidden = CliError::Auth("x".into()).because(Reason::Forbidden);
+        let wait = CliError::Upstream("x".into()).because(RATE_LIMITED);
+        let gone = CliError::Upstream("x".into()).because(UNREACHABLE);
+        assert!(ends_run(&refused) && ends_run(&wait) && ends_run(&gone));
+        assert!(!ends_run(&forbidden));
+        assert!(!ends_run(&CliError::Upstream("x".into())));
+        assert!(!ends_run(&CliError::NotFound("x".into())));
+        assert_eq!(skip_code(&forbidden), "forbidden");
+        assert_eq!(skip_code(&CliError::NotFound("x".into())), "no_file");
+        assert_eq!(
+            skip_code(&CliError::Upstream("x".into()).because(VERIFY_FAILED)),
+            "verify_failed"
+        );
+        assert_eq!(skip_code(&CliError::Upstream("x".into())), "upstream");
     }
 
     #[test]

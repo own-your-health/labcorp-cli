@@ -16,7 +16,7 @@ use labcorp::session::Session;
 use pk_cli_config::profile::ProfileName;
 use pk_cli_core::CliError;
 use pk_cli_secrets::Secret;
-use pk_med_records::{Item, RecordsReader, StreamError, Trailer};
+use pk_med_records::{Header as StreamHeader, Item, RecordsReader, StreamError, Trailer};
 use serde_json::Value;
 
 const FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/site");
@@ -43,17 +43,29 @@ struct Seen {
     body: String,
 }
 
-/// After this many requests, answer every API read with this status.
-#[derive(Clone, Copy)]
+/// After this many requests, answer the API reads whose path holds `path`
+/// (every one, without) with this status. A 429 carries `Retry-After`.
+#[derive(Clone)]
 struct Fault {
     after: usize,
     status: u16,
+    path: Option<String>,
+    /// `path` is the whole path, not a part of it.
+    exact: bool,
+}
+
+/// How the server answers, set by a test before it reads.
+#[derive(Clone)]
+struct Plan {
+    faults: Vec<Fault>,
+    /// The fixture `/protected/patients/current` answers.
+    account: &'static str,
 }
 
 struct Server {
     base: String,
     seen: Arc<Mutex<Vec<Seen>>>,
-    fault: Arc<Mutex<Option<Fault>>>,
+    plan: Arc<Mutex<Plan>>,
 }
 
 impl Server {
@@ -61,8 +73,11 @@ impl Server {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let fault = Arc::new(Mutex::new(None));
-        let (s, f) = (seen.clone(), fault.clone());
+        let plan = Arc::new(Mutex::new(Plan {
+            faults: Vec::new(),
+            account: "account.json",
+        }));
+        let (s, f) = (seen.clone(), plan.clone());
         std::thread::spawn(move || {
             for stream in listener.incoming() {
                 let Ok(stream) = stream else { continue };
@@ -70,7 +85,7 @@ impl Server {
                 std::thread::spawn(move || serve(stream, &s, &f));
             }
         });
-        Server { base, seen, fault }
+        Server { base, seen, plan }
     }
 
     fn endpoints(&self) -> Endpoints {
@@ -89,7 +104,25 @@ impl Server {
     }
 
     fn fail_after(&self, after: usize, status: u16) {
-        *self.fault.lock().unwrap() = Some(Fault { after, status });
+        self.plan.lock().unwrap().faults.push(Fault {
+            after,
+            status,
+            path: None,
+            exact: false,
+        });
+    }
+
+    fn fail_path(&self, path: &str, status: u16, exact: bool) {
+        self.plan.lock().unwrap().faults.push(Fault {
+            after: 0,
+            status,
+            path: Some(path.into()),
+            exact,
+        });
+    }
+
+    fn account(&self, fixture: &'static str) {
+        self.plan.lock().unwrap().account = fixture;
     }
 }
 
@@ -123,7 +156,7 @@ fn query(target: &str, key: &str) -> Option<String> {
         .map(|(_, v)| v.to_string())
 }
 
-fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, fault: &Mutex<Option<Fault>>) {
+fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, plan: &Mutex<Plan>) {
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut head = Vec::new();
     let mut byte = [0u8; 1];
@@ -194,11 +227,20 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, fault: &Mutex<Option<Fa
     }
 
     // The portal API.
-    if let Some(f) = *fault.lock().unwrap() {
-        if n > f.after {
-            json(&mut stream, f.status, r#"{"message":"dummy refusal"}"#);
-            return;
+    let plan = plan.lock().unwrap().clone();
+    let fault = plan.faults.iter().find(|f| {
+        n > f.after
+            && f.path
+                .as_deref()
+                .is_none_or(|p| if f.exact { path == p } else { path.contains(p) })
+    });
+    if let Some(f) = fault {
+        let mut extra = vec![("Content-Type", "application/json".to_string())];
+        if f.status == 429 {
+            extra.push(("Retry-After", "30".into()));
         }
+        respond(&mut stream, f.status, &extra, br#"{"message":"dummy refusal"}"#);
+        return;
     }
     let auth = headers.get("authorization").cloned().unwrap_or_default();
     if auth != format!("Bearer {LIVE}") && auth != format!("Bearer {RENEWED}") {
@@ -210,7 +252,7 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, fault: &Mutex<Option<Fa
         return;
     }
     match path.as_str() {
-        "/protected/patients/current" => json(&mut stream, 200, &fixture("account.json")),
+        "/protected/patients/current" => json(&mut stream, 200, &fixture(plan.account)),
         "/protected/patients/current/linkedAccounts" => json(&mut stream, 200, &fixture("linked-accounts.json")),
         "/protected/patients/current/linkedAccounts/results/headers/all" => {
             json(&mut stream, 200, &fixture("headers-all.json"))
@@ -274,18 +316,24 @@ fn profile() -> ProfileName {
     ProfileName::parse("adult1").unwrap()
 }
 
-/// One person's export from the server, read back: the resources by type
-/// and the trailer.
-fn export(server: &Server, s: Session, kept: &Kept, who: &str) -> (Vec<Value>, Trailer) {
+/// One person's export from the server, read back.
+struct Exported {
+    header: StreamHeader,
+    resources: Vec<Value>,
+    trailer: Trailer,
+    warnings: Vec<String>,
+}
+
+fn export_since(server: &Server, s: Session, kept: &Kept, who: &str, since: Option<&str>) -> Exported {
     let client = Client::new(&profile(), s, kept, server.endpoints()).unwrap();
-    let mut site = Site { client };
+    let mut site = Site::new(client, true);
     let people = site.household().unwrap();
     let p = people.iter().find(|p| p.id == who).unwrap().clone();
     let headers = site.headers().unwrap();
     let mut out = Vec::new();
-    let finished = commands::stream(&mut site, &people, &p, headers, None, true, &mut out).unwrap();
+    let finished = commands::stream(&mut site, &people, &p, headers, since, true, &mut out).unwrap();
     let mut reader = RecordsReader::new(std::io::Cursor::new(out));
-    reader.header().unwrap();
+    let header = reader.header().unwrap().clone();
     let mut resources = Vec::new();
     for item in reader.by_ref() {
         match item {
@@ -297,7 +345,29 @@ fn export(server: &Server, s: Session, kept: &Kept, who: &str) -> (Vec<Value>, T
             Err(e) => panic!("{e}"),
         }
     }
-    (resources, finished.trailer)
+    Exported {
+        header,
+        resources,
+        trailer: finished.trailer,
+        warnings: site.warnings,
+    }
+}
+
+/// The resources and the trailer of one person's whole export.
+fn export(server: &Server, s: Session, kept: &Kept, who: &str) -> (Vec<Value>, Trailer) {
+    let e = export_since(server, s, kept, who, None);
+    (e.resources, e.trailer)
+}
+
+fn ids<'a>(resources: &'a [Value], kind: &str) -> Vec<&'a str> {
+    of(resources, kind).iter().filter_map(|r| r["id"].as_str()).collect()
+}
+
+fn skips(t: &Trailer) -> Vec<(String, String)> {
+    t.skipped
+        .iter()
+        .map(|s| (s.id.clone().unwrap_or_default(), s.code.clone()))
+        .collect()
 }
 
 fn of<'a>(resources: &'a [Value], kind: &str) -> Vec<&'a Value> {
@@ -387,7 +457,7 @@ fn a_spelled_value_keeps_its_spelling() {
     let server = Server::start();
     let kept = Kept::default();
     let client = Client::new(&profile(), session(LIVE, FAR, None), &kept, server.endpoints()).unwrap();
-    let mut site = Site { client };
+    let mut site = Site::new(client, true);
     let people = site.household().unwrap();
     let headers = site.headers().unwrap();
     let mut out = Vec::new();
@@ -483,7 +553,7 @@ fn an_ended_okta_session_is_exit_3_naming_the_sign_in() {
         server.endpoints(),
     )
     .unwrap();
-    let mut site = Site { client };
+    let mut site = Site::new(client, true);
     let e = site.household().err().unwrap();
     assert_eq!(e.exit_code(), 3);
     assert!(e.remedy().unwrap().contains("auth login --browser --profile adult1"));
@@ -497,7 +567,7 @@ fn an_ended_okta_session_is_exit_3_naming_the_sign_in() {
         server.endpoints(),
     )
     .unwrap();
-    let e = Site { client }.household().err().unwrap();
+    let e = Site::new(client, true).household().err().unwrap();
     assert_eq!(e.exit_code(), 3);
 }
 
@@ -540,5 +610,121 @@ fn api_paths_stay_on_the_portal_api() {
     assert_eq!(
         client.url("/protected/patients/current").unwrap(),
         format!("{}/protected/patients/current", server.base)
+    );
+}
+
+#[test]
+fn since_takes_results_reported_or_collected_from_that_day_and_the_undated() {
+    let server = Server::start();
+    let kept = Kept::default();
+    // SYNR00000001 was collected the day before and reported on the day;
+    // SYNR00000002 is collected later (not ready); SYNR00000003 is older.
+    let e = export_since(
+        &server,
+        session(LIVE, FAR, None),
+        &kept,
+        "SYNP000001",
+        Some("2026-03-05"),
+    );
+    assert!(e.trailer.complete);
+    assert_eq!(ids(&e.resources, "DiagnosticReport"), ["lcr-SYNR00000001"]);
+    assert_eq!(skips(&e.trailer), [("lcr-SYNR00000002".into(), "not_ready".into())]);
+    assert_eq!(ids(&e.resources, "Patient"), ["lcp-SYNP000001"]);
+    assert_eq!(e.header.since.as_deref(), Some("2026-03-05"));
+    assert_eq!(e.header.since_unbounded, ["Organization", "Patient"]);
+    // A day after both of SYNR00000001's leaves it out.
+    let e = export_since(
+        &server,
+        session(LIVE, FAR, None),
+        &kept,
+        "SYNP000001",
+        Some("2026-03-06"),
+    );
+    assert!(ids(&e.resources, "DiagnosticReport").is_empty());
+    // A result with no date at all is kept, since nothing says it is older.
+    let e = export_since(
+        &server,
+        session(LIVE, FAR, None),
+        &kept,
+        "SYNP000002",
+        Some("2026-03-05"),
+    );
+    assert!(ids(&e.resources, "DiagnosticReport").is_empty());
+    assert_eq!(skips(&e.trailer), [("lcr-SYNR00000006".into(), "not_ready".into())]);
+    // Without --since the header says nothing of one.
+    let e = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000002", None);
+    assert_eq!(e.header.since, None);
+    assert!(e.header.since_unbounded.is_empty());
+    assert_eq!(ids(&e.resources, "DiagnosticReport"), ["lcr-SYNR00000004"]);
+}
+
+#[test]
+fn a_forbidden_result_is_skipped_and_the_rest_exported() {
+    let server = Server::start();
+    let kept = Kept::default();
+    server.fail_path("/results/SYNR00000003", 403, false);
+    let (rs, t) = export(&server, session(LIVE, FAR, Some(OKTA_LIVE)), &kept, "SYNP000001");
+    assert!(t.complete, "{t:?}");
+    assert_eq!(
+        skips(&t),
+        [
+            ("lcr-SYNR00000003".into(), "forbidden".into()),
+            ("lcr-SYNR00000002".into(), "not_ready".into()),
+        ]
+    );
+    assert_eq!(ids(&rs, "DiagnosticReport"), ["lcr-SYNR00000001"]);
+    // A 403 is no reason to renew.
+    assert!(!server.paths().iter().any(|p| p.starts_with("/oauth2")));
+}
+
+#[test]
+fn a_request_to_wait_ends_the_stream_and_nothing_more_is_asked() {
+    let server = Server::start();
+    let kept = Kept::default();
+    server.fail_path("/results/SYNR00000003", 429, false);
+    let (rs, t) = export(&server, session(LIVE, FAR, None), &kept, "SYNP000001");
+    assert!(!t.complete);
+    let err = t.error.as_ref().unwrap();
+    assert_eq!((err.code.as_str(), err.exit_code), ("upstream", Some(5)));
+    assert!(ids(&rs, "DiagnosticReport").is_empty());
+    let paths = server.paths();
+    assert!(paths.last().unwrap().ends_with("/results/SYNR00000003"), "{paths:?}");
+    assert!(!paths.iter().any(|p| p.contains("SYNR00000001")));
+}
+
+#[test]
+fn a_result_naming_nobody_here_is_never_filed_under_the_only_person() {
+    let server = Server::start();
+    let kept = Kept::default();
+    // The account alone: no dependents, and the shared accounts not served.
+    server.account("account-alone.json");
+    server.fail_path("/protected/patients/current/linkedAccounts", 404, true);
+    let e = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
+    assert!(e.trailer.complete);
+    let mut reports = ids(&e.resources, "DiagnosticReport");
+    reports.sort_unstable();
+    assert_eq!(reports, ["lcr-SYNR00000001", "lcr-SYNR00000003"]);
+    for r in &e.resources {
+        let text = r.to_string();
+        for other in [
+            "SYNR00000004",
+            "SYNR00000005",
+            "SYNR00000006",
+            "SYNP000002",
+            "SYNP000003",
+        ] {
+            assert!(!text.contains(other), "{other} in {}", r["id"]);
+        }
+    }
+    assert!(!server
+        .paths()
+        .iter()
+        .any(|p| p.contains("SYNR00000004") || p.contains("SYNR00000005")));
+    assert_eq!(e.warnings.len(), 2, "{:?}", e.warnings);
+    assert!(e.warnings[0].contains("404"), "{}", e.warnings[0]);
+    assert!(
+        e.warnings[1].starts_with("3 result(s) name a person"),
+        "{}",
+        e.warnings[1]
     );
 }

@@ -156,6 +156,13 @@ linked account (its `recipientLinkedId`, else its `linkedId`), and
 `/linkedAccounts` for a dependent the account's record lists
 (`dependents[].dependent`). To confirm against real answers.
 
+`labcorp` files a result under the person its `pid` names, and only a
+header with no `pid` under the one person its name names (or the only
+person). A header whose `pid` names nobody the login shows is left out of
+every export with a warning, never filed under someone else; `results list`
+shows it with no patient. If the linked accounts answer 404, `labcorp`
+warns and reads the account and its dependents alone.
+
 From the web app's models:
 
 - a header: `id`, `pid`, `patientName`, `dateOfService`, `reportDate`,

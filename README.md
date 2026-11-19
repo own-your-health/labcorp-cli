@@ -46,6 +46,11 @@ labcorp api GET /protected/patients/current --profile adult1
 name only one person has; it may be left out when the login shows one
 person. `docs/fhir.md` describes the FHIR the export writes.
 
+`records export --since D` takes results reported or collected on or after
+D; `results list --since D` goes by the collection day. An export or
+`documents download --all` stops at a refused session, a request from
+Labcorp to wait, or no answer, and says so; run it again later.
+
 There is no default profile: every command that signs in or reads takes
 `--profile <NAME>` (or `LABCORP_PROFILE`), and a lone configured profile is
 never picked for you.

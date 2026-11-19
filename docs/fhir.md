@@ -63,11 +63,24 @@ A decimal keeps its written spelling: `1.50` is written `1.50`.
 | What | Code |
 |---|---|
 | A result with no value reported yet (`isDetailAvailable` false) | `not_ready` |
-| A result whose detail the API refused or did not find | the error's (`upstream`, `not_found`, `forbidden`) |
+| A result whose detail the API refused (403) | `forbidden` |
+| A result whose detail the API did not find (404) or failed (5xx) | `not_found`, `upstream` |
 | A report PDF that is not a PDF | `verify_failed` |
-| A report PDF the API did not serve | `no_file`, `upstream` |
+| A report PDF the API refused, did not serve or failed | `forbidden`, `no_file`, `upstream` |
 
-A refused session (exit 3) ends the stream incomplete, its error in the
-trailer. With `--since`, a result is exported when its report or collection
-day is that day or later; `Organization` and `Patient` are always exported
-(`since_unbounded`).
+A failure that every later read would meet too ends the stream incomplete,
+its error in the trailer: a refused session (a 401 after renewal, or Okta's
+session ended; exit 3), a request to wait (a 429 or `Retry-After`; exit 5)
+or no answer at all (exit 5). The next export starts again from the oldest
+result; the ids make it merge with what was filed.
+
+A result whose `pid` names a person the login does not show is nobody's
+(docs/api.md, "Reads"): no export carries it, and the export warns on
+stderr how many there are.
+
+With `--since`, a result is exported when its report or collection day is
+that day or later, so a result Labcorp reports again is exported again. A
+result with no date is always exported. `Organization` and `Patient` are
+always exported (`since_unbounded`). `results list --since` goes by the
+collection day alone. The export has no `--until`: health-records/v1 gives
+`records export` a `since` and no upper bound.
