@@ -12,15 +12,17 @@ replaces the one filed before when its content changed, and only refreshes
 the filed copy (medical-common's `version::decide`, `Refreshed`) when it
 did not.
 
-The report PDF's `Binary` and `DocumentReference` take the read time too,
-though §1.4 dates a document the site lists by its own date. A report's
-PDF changes while its tests come in, and nothing seen yet says Labcorp
-moves `reportDate` when it does (to confirm against a real account). Under
-an unmoved listed date the final PDF would be no later than the
-preliminary one filed, and would be filed as older; under the read time it
-replaces it (`tests/site_e2e.rs`,
-`the_final_report_replaces_the_preliminary_one_in_the_store`). The cost: an
-unchanged PDF is rewritten in place on each import.
+The report PDF's `Binary` and `DocumentReference` carry instead the date
+Labcorp lists the report with (§1.4: a listed document carries its own
+date; `fhir::listed_at`): its `reportDate` as written when it has an
+offset, else that day, else the collection day, at `00:00:00Z`, and the
+read time only when the header has no date. An unchanged PDF is then the
+same line on every export. A store keeps the two with no provenance of its
+own, so they are decided against no known time (§1.4, medical-common
+v0.6.5): a PDF with other content replaces the held one even under the
+same listed date, as the final PDF of a report that was preliminary does
+(`tests/site_e2e.rs`,
+`the_final_report_replaces_the_preliminary_one_in_the_store`).
 
 ## Identity
 
