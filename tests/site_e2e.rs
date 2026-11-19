@@ -891,6 +891,14 @@ fn the_final_report_replaces_the_preliminary_one_in_the_store() {
             incoming.value().unwrap()["meta"]["lastUpdated"]
         );
         assert_eq!(decide(&held, &held_p, &incoming, &incoming_p), Filing::Replaces, "{id}");
+        // Held with the provenance of a record filed from it, the final one
+        // still replaces it: other content at the same time, by the same
+        // route (`meta.source`), read later (v0.6.6's tie rule).
+        let (held, held_p) = filed(&early, id);
+        assert_eq!(decide(&held, &held_p, &incoming, &incoming_p), Filing::Replaces, "{id}");
+        // And the preliminary stream imported again afterwards changes
+        // nothing.
+        assert_eq!(decide(&incoming, &incoming_p, &held, &held_p), Filing::Older, "{id}");
     }
     // The records, dated by the read: the report changed status and
     // replaces; the value did not change and only refreshes.

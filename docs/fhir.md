@@ -19,9 +19,13 @@ offset, else that day, else the collection day, at `00:00:00Z`, and the
 read time only when the header has no date. An unchanged PDF is then the
 same line on every export. A store keeps the two with no provenance of its
 own, so they are decided against no known time (§1.4, medical-common
-v0.6.5): a PDF with other content replaces the held one even under the
-same listed date, as the final PDF of a report that was preliminary does
-(`tests/site_e2e.rs`,
+v0.6.5); a store that does keep their provenance breaks the tie by the
+later read of the same `meta.source` (v0.6.6). Either way the final PDF of
+a report that was preliminary replaces the preliminary one under the same
+listed date. Where provenance is kept, the preliminary stream imported
+again afterwards changes nothing (`Older`); where it is not, that older
+PDF would replace the final one, so import streams in the order they were
+read (`tests/site_e2e.rs`,
 `the_final_report_replaces_the_preliminary_one_in_the_store`).
 
 ## Identity
