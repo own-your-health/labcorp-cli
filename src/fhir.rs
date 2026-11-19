@@ -604,10 +604,13 @@ pub fn listed_at(h: &Header) -> Option<String> {
 
 /// A result's resources in stream order: each value, each ordered test,
 /// the report, then with `pdf` its file and the document that files it.
-/// Each is dated `at`, when the result was read, except the report PDF's
-/// `Binary` and `DocumentReference`: a document the site lists with a date
-/// of its own carries that date (DESIGN.md §1.4), [`listed_at`], so a
-/// re-export uploads the PDF again only when Labcorp reissues the report.
+/// Each is dated `at`, when the result was read, except the PDF of a
+/// settled report (no test still to come or preliminary): its `Binary` and
+/// `DocumentReference` carry the date the site lists the report with
+/// (DESIGN.md §1.4, [`listed_at`]), so a re-export uploads the PDF again
+/// only when Labcorp reissues it under a later date. A report still
+/// changing keeps the read time: its PDF changes under the same listed
+/// date, and only a later time lets the newer one replace the copy filed.
 pub fn report_resources(p: &Person, d: &Detail, pdf: Option<&[u8]>, at: &str) -> Result<Vec<RawResource>, CliError> {
     let h = &d.header;
     let ids = Ids::of(d);
@@ -627,7 +630,7 @@ pub fn report_resources(p: &Person, d: &Detail, pdf: Option<&[u8]>, at: &str) ->
         at,
     ))?);
     if let Some(bytes) = pdf {
-        let listed = listed_at(h);
+        let listed = h.complete().then(|| listed_at(h)).flatten();
         let doc_at = listed.as_deref().unwrap_or(at);
         out.push(RawResource::from_value(&read_at(binary(h, bytes), doc_at))?);
         out.push(RawResource::from_value(&read_at(
@@ -794,6 +797,18 @@ mod tests {
             panel["hasMember"][1]["reference"],
             "Observation/lco-r1-000001-000002-i0n1"
         );
+        // A report still changing dates its PDF by the read too, so the
+        // final PDF replaces the preliminary one under the same listed date.
+        let mut early = d.clone();
+        early.header.statuses = vec!["FINAL".into(), "PRELIMINARY".into()];
+        for r in report_resources(&person(), &early, Some(b"%PDF-1.4 dummy"), "2026-03-06T12:00:00Z").unwrap() {
+            assert_eq!(
+                r.value().unwrap()["meta"]["lastUpdated"],
+                "2026-03-06T12:00:00Z",
+                "{}",
+                r.resource_type
+            );
+        }
         let p = patient(&person());
         assert_eq!(p["gender"], "female");
         assert_eq!(p["name"][0]["given"][0], "Alex");
