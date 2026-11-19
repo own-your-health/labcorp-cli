@@ -259,14 +259,14 @@ fn auth_logout_without_a_session_removes_nothing() {
     );
 }
 
+/// `auth reset` removes every session and the vault's key: without a
+/// terminal it needs --force (exit 6), decided before the vault is opened.
+/// A forced reset is not run here: it deletes a keychain item, and CI's
+/// Linux runner has no keychain.
 #[test]
-fn auth_reset_asks_first() {
-    labcorp().args(["auth", "reset"]).assert().code(6);
-    labcorp()
-        .args(["auth", "reset", "--force", "--json"])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains("auth-reset/v1"));
+fn auth_reset_needs_force_without_a_terminal() {
+    let out = labcorp().args(["auth", "reset", "--json"]).assert().code(6);
+    assert_eq!(error_of(&out)["error"]["code"], "confirmation_required");
 }
 
 #[test]
