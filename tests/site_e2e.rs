@@ -788,3 +788,22 @@ fn a_renewal_failing_mid_export_ends_it_incomplete() {
         "{paths:?}"
     );
 }
+
+#[test]
+fn every_resource_is_dated_by_when_its_page_was_read() {
+    let server = Server::start();
+    let kept = Kept::default();
+    let e = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
+    let pulled = e.header.pulled_at.as_str();
+    for r in &e.resources {
+        let at = r["meta"]["lastUpdated"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{} has no lastUpdated", r["id"]));
+        // Every time is RFC 3339 UTC from the same clock, so text order is
+        // time order.
+        assert!(at.ends_with('Z') && at >= pulled, "{}: {at} before {pulled}", r["id"]);
+    }
+    for kind in ["Organization", "Patient"] {
+        assert_eq!(of(&e.resources, kind)[0]["meta"]["lastUpdated"], pulled);
+    }
+}

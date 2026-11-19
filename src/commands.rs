@@ -807,10 +807,15 @@ pub fn stream(
         .filter(|h| since.is_none_or(|s| h.changed_day().is_none_or(|d| d.as_str() >= s)))
         .collect();
     selected.sort_by(|a, b| a.service_day().cmp(&b.service_day()).then_with(|| a.id.cmp(&b.id)));
-    let mut w = RecordsWriter::start(out, &stream_header(p, since))?;
+    let header = stream_header(p, since);
+    let pulled_at = header.pulled_at.clone();
+    let mut w = RecordsWriter::start(out, &header)?;
     let written = (|| -> Result<(), CliError> {
-        w.resource(&RawResource::from_value(&fhir::organization())?)?;
-        w.resource(&RawResource::from_value(&fhir::patient(p))?)?;
+        w.resource(&RawResource::from_value(&fhir::read_at(
+            fhir::organization(),
+            &pulled_at,
+        ))?)?;
+        w.resource(&RawResource::from_value(&fhir::read_at(fhir::patient(p), &pulled_at))?)?;
         for h in &selected {
             let rid = fhir::report_id(h);
             if !h.detail_available {
@@ -842,7 +847,8 @@ pub fn stream(
             } else {
                 None
             };
-            for r in fhir::report_resources(p, &d, pdf.as_deref())? {
+            let read = crate::time::now_rfc3339();
+            for r in fhir::report_resources(p, &d, pdf.as_deref(), &read)? {
                 w.resource(&r)?;
             }
         }

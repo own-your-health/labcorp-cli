@@ -4,7 +4,11 @@
 (`src/fhir.rs`; no FHIR library). The stream is `records-stream/v1` with
 `method: "portal"` (medical-common DESIGN.md §1.4). Every resource carries
 `meta.source` `labcorp:portal` and the tag `mapped-from-labcorp-patient`
-(system `https://github.com/piekstra/labcorp-cli/fhir/tag`).
+(system `https://github.com/piekstra/labcorp-cli/fhir/tag`), and
+`meta.lastUpdated` the time its page was read (DESIGN.md §1.4): a result's
+resources when its detail was read, `Organization` and `Patient` the
+header's `pulled_at`. A later export's version of a resource therefore
+replaces the one filed before, a corrected result included.
 
 ## Identity
 
