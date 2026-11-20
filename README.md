@@ -82,12 +82,14 @@ labcorp patients list --profile me          # ids such as lcp-<id>
 labcorp results list --profile me --patient <ID> --since 2026-01-01
 labcorp results get <RESULT ID> --profile me            # every value, flag and range
 labcorp documents download --all -o ~/Labcorp --profile me   # the report PDFs
+#    A PDF already in the folder is kept unread, even if Labcorp has since updated
+#    the report; add --overwrite to read and replace them all.
 
 # 4. Into medrec: medrec runs the export itself, with your profile.
 medrec --profile <FOLDER> import --from labcorp --from-profile me --patient <ID> --person <PERSON>
 
 # Or the stream on stdout, for any reader of records-stream/v1:
-labcorp records export --profile me --patient <ID> --ndjson > labcorp.ndjson
+labcorp records export --profile me --patient <ID> --ndjson | <READER>
 ```
 
 `--patient` takes an id from `patients list`, Labcorp's own id, or a first
@@ -149,13 +151,13 @@ host is exit 2 before anything is sent. `docs/api.md` lists the reads.
 | `results list [--patient ID] [--since D] [--until D]` | results, newest collection first (`result-list/v1`) |
 | `results get <ID>` | one result with its values (`result/v1`) |
 | `documents list`, `documents download <ID>\|--all` | the report PDFs (`documents/v1`) |
-| `records export --patient <ID> --ndjson` (or `-o DIR`) | one person's results as `records-stream/v1`; `--since D`, `--no-pdfs` |
+| `records export --patient <ID> --ndjson` | one person's results as `records-stream/v1` on stdout; `--since D`, `--no-pdfs`. `-o DIR` writes it to `DIR/records.ndjson` instead, for development only: real records go straight into medrec |
 | `api GET <PATH> --profile <NAME>` | one read of the portal API |
 | `config path\|show` | the config file (profile names only; no secret) |
 | `info` | `cli-info/v1` |
 | `self-update`, `completions <SHELL>` | |
 
-Every command takes `--json` (one document on stdout) and `-q`. Exit codes:
+Every command takes `-q`, and every command but `records export --ndjson` takes `--json` (one document on stdout); the stream is that command's output, so `--json` with it is exit 2. Exit codes:
 0 ok, 2 usage, 3 auth, 4 not found, 5 upstream, 6 confirmation needed.
 
 ## Where things are kept
