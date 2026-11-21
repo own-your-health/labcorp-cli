@@ -7,6 +7,7 @@ pub mod cli;
 pub mod client;
 pub mod commands;
 pub mod fhir;
+pub mod labels;
 pub mod portal;
 pub mod session;
 pub mod site;

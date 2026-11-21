@@ -31,19 +31,28 @@ read (`tests/site_e2e.rs`,
 ## Identity
 
 Every id derives from Labcorp's own ids, so a re-export carries the same
-ids and the store merges it with what it filed before.
+ids and the store merges it with what it filed before. A person's id is a
+one-way digest of Labcorp's patient id, never the id itself
+(medical-common DESIGN.md §1.3).
 
 | Resource | Id | From |
 |---|---|---|
 | `Organization` | `labcorp` | fixed |
-| `Patient` | `lcp-<patient id>` | the account's `id`, a dependent's `id`, a linked account's `patientMasterId` |
+| `Patient` | `l` and the first 16 hex digits of SHA-256 over `7:labcorp` and the patient id, written as its length, `:` and the id | the account's `id`, a dependent's `id`, a linked account's `patientMasterId` |
 | `DiagnosticReport` | `lcr-<result id>` | the result header's `id` |
 | `Observation`, an ordered test | `lco-<result id>-<test code>` | `orderedItems[].testCode`, else `i<place>` |
 | `Observation`, a value | `lco-<result id>-<test code>-<result code>` | `results[].number`, else `n<place>` |
 | `Binary` | `lcb-<result id>` | the report PDF |
 | `DocumentReference` | `lcd-<result id>` | the report PDF; also its `documents/v1` id |
 
-A character outside `[A-Za-z0-9.-]` becomes `.`. An id over 64 characters
+Every login that reads a person sees the same Labcorp patient id, so a
+dependent read from a parent's account and from their own gets one patient
+id. The digest keeps Labcorp's id out of `patients list`, stream headers,
+`--patient` arguments and a store's folders. A short id can still be
+recovered by trying every value, so a patient id is handled as the Labcorp
+id it comes from: it is in no error message, log line, fixture or doc.
+
+In the other ids, a character outside `[A-Za-z0-9.-]` becomes `.`. An id over 64 characters
 becomes its prefix and 40 hex digits of the SHA-256 of the rest. An id met
 twice in one report (Labcorp repeating a result code) gets its place
 appended, so no value is dropped as a repeat.

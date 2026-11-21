@@ -84,6 +84,7 @@ fn every_command_renders_help() {
         vec!["profiles", "remove", "--help"],
         vec!["patients", "--help"],
         vec!["patients", "list", "--help"],
+        vec!["patients", "label", "--help"],
         vec!["records", "--help"],
         vec!["records", "export", "--help"],
         vec!["results", "--help"],
@@ -128,6 +129,7 @@ fn info_declares_the_profiles_and_the_login_profiles_capability() {
     assert!(profiles.contains(&"health-records/v1") && profiles.contains(&"documents/v1"));
     let caps = v["capabilities"].as_array().unwrap();
     assert!(caps.iter().any(|c| c == "login-profiles"));
+    assert!(caps.iter().any(|c| c == "patient-labels"));
     assert!(
         !caps.iter().any(|c| c == "records-files"),
         "labcorp has no files source"
@@ -382,4 +384,98 @@ fn profiles_add_list_remove() {
         .assert()
         .success()
         .stdout(predicate::str::contains("\"profiles\": []"));
+}
+
+/// Two synthetic patient ids (17 characters, as labcorp derives them, but
+/// not the digest of anyone) that a read of `adult1` has listed: one
+/// labelled `me`, one with no label.
+const ME: &str = "l0000000000000001";
+const KID: &str = "l0000000000000002";
+
+/// A config where `adult1` has listed [`ME`] (labelled `me`) and [`KID`],
+/// and `adult2` nobody.
+fn config_with_people() -> std::path::PathBuf {
+    let base = tmp();
+    std::fs::create_dir_all(base.join("labcorp")).unwrap();
+    let config = serde_json::json!({ "profiles": {
+        "adult1": { "members": {
+            ME: { "label": "me", "relationship": "self" },
+            KID: { "relationship": "proxy" },
+        } },
+        "adult2": {},
+    } });
+    std::fs::write(base.join("labcorp").join("config.json"), config.to_string()).unwrap();
+    base
+}
+
+fn label_of(config: &std::path::Path, id: &str) -> Value {
+    let raw = std::fs::read_to_string(config.join("labcorp").join("config.json")).unwrap();
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    v["profiles"]["adult1"]["members"][id]["label"].clone()
+}
+
+#[test]
+fn patients_label_sets_and_clears_a_label_without_a_session() {
+    let config = config_with_people();
+    let run = |args: &[&str]| {
+        labcorp_in(config.clone())
+            .args(["--json", "patients", "label", "--profile", "adult1"])
+            .args(args)
+            .assert()
+    };
+    let out = run(&["--patient", KID, "kid"]).success();
+    let v: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
+    assert_eq!(v["schema"], "patient-list/v1");
+    assert_eq!(v["items"][0]["id"], KID);
+    assert_eq!(v["items"][0]["label"], "kid");
+    assert_eq!(v["items"][0]["relationship"], "proxy");
+    assert!(v["items"][0].get("name").is_none(), "{v}");
+    assert_eq!(label_of(&config, KID), "kid");
+    // The label stands for the person from now on, case aside; setting it
+    // again changes nothing.
+    run(&["--patient", "KID", "kid"]).success();
+    assert_eq!(label_of(&config, KID), "kid");
+    run(&["--patient", "kid", "--clear"]).success();
+    assert_eq!(label_of(&config, KID), Value::Null);
+    // Clearing one that is not set succeeds too.
+    run(&["--patient", KID, "--clear"]).success();
+}
+
+#[test]
+fn patients_label_refuses_what_would_make_patient_ambiguous() {
+    let config = config_with_people();
+    let run = |args: &[&str]| {
+        labcorp_in(config.clone())
+            .args(["--json", "patients", "label", "--profile", "adult1"])
+            .args(args)
+            .assert()
+    };
+    // Held by another person: exit 2, with the remedy that clears it.
+    let held = run(&["--patient", KID, "ME"]).code(2);
+    let e = error_of(&held);
+    assert!(
+        e["error"]["remedy"].as_str().unwrap().contains("--patient ME --clear"),
+        "{e}"
+    );
+    // A person's id, an empty label, both or neither: exit 2.
+    run(&["--patient", KID, ME]).code(2);
+    run(&["--patient", KID, "  "]).code(2);
+    run(&["--patient", KID, "kid", "--clear"]).code(2);
+    run(&["--patient", KID]).code(2);
+    assert_eq!(label_of(&config, KID), Value::Null);
+    assert_eq!(label_of(&config, ME), "me");
+}
+
+#[test]
+fn patients_label_for_no_one_listed_is_exit_4_and_repeats_nothing() {
+    let config = config_with_people();
+    for (profile, q) in [("adult1", "l00000000000000ff"), ("adult1", "Jordan"), ("adult2", ME)] {
+        let out = labcorp_in(config.clone())
+            .args(["--json", "patients", "label", "--profile", profile, "--patient", q, "x"])
+            .assert()
+            .code(4);
+        let text = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+        assert!(!text.contains(q), "{q} in: {text}");
+        assert!(text.contains("patients list"), "{text}");
+    }
 }

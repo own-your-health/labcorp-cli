@@ -97,6 +97,11 @@ pub fn run(cli: &Cli) -> Result<(), CliError> {
             source::no_profile(cli, "config")?;
             config(&ctx, cmd)
         }
+        Command::Patients(PatientsCmd::Label(args)) => {
+            // The profile's settings alone: no vault, no request.
+            let profile = source::login_profile(cli, &ctx.profiles()?)?;
+            crate::labels::run(&ctx.store, &profile, args, ctx.json(), ctx.quiet())
+        }
         Command::Patients(_) | Command::Records(_) | Command::Results(_) | Command::Documents(_) | Command::Api(_) => {
             // The command's own arguments first, so a bad one reaches neither
             // the vault nor the site.
@@ -128,8 +133,8 @@ pub fn run(cli: &Cli) -> Result<(), CliError> {
 }
 
 /// `info`: cli-info/v1, with the health-records/v1 and documents/v1
-/// profiles, and `login-profiles` since every command that reads records
-/// takes `--profile`.
+/// profiles, `login-profiles` since every command that reads records takes
+/// `--profile`, and `patient-labels` for `patients label`.
 pub fn info() -> CliInfo {
     CliInfo::new(
         BIN,
@@ -148,6 +153,7 @@ pub fn info() -> CliInfo {
             "documents",
             "api",
             pk_med_records::LOGIN_PROFILES,
+            pk_med_records::PATIENT_LABELS,
         ],
     )
     .with_profiles(PROFILES)

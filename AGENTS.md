@@ -22,7 +22,8 @@ Every `pk-cli-*` stays on the cli-common tag medical-common pins.
 | `src/client.rs` | the portal API reads: bearer, pacing, no redirects, answers to exit codes (`judge`), token renewal from Okta's session (`renew`) |
 | `src/commands.rs` | the commands that read as a profile (`check_args` before anything is read); `Site`, the reads; `stream`, the export |
 | `src/portal.rs` | the API's answers into the model: people (`household`, `Person::scope`), result headers, result detail |
-| `src/fhir.rs` | the FHIR mapping (`docs/fhir.md`), ids from Labcorp's own, decimals in their written spelling |
+| `src/fhir.rs` | the FHIR mapping (`docs/fhir.md`), ids from Labcorp's own (a person's a digest), decimals in their written spelling |
+| `src/labels.rs` | `patients label`, and the people a read has listed, kept in the profile's settings by patient id with their labels |
 | `src/time.rs` | the clock as Unix seconds and RFC 3339 |
 | `docs/api.md` | how Labcorp data can be reached, Labcorp's own wording, the session, the reads, the traps |
 | `docs/fhir.md` | what the export writes |
@@ -92,6 +93,14 @@ a 403 included, with its code. A result is filed only under the person its
 `pid` names (`commands::owner`); one naming nobody the login shows is left
 out, never given to the only person.
 
+`--patient` takes a person's patient id or their label (`commands::pick`,
+medical-common DESIGN.md §1): never a name Labcorp shows, nor Labcorp's
+own id. A patient id is a digest of Labcorp's (`fhir::patient_id`) and is
+handled as that id: an error names a person by label or not at all, lists
+no ids, and does not repeat the `--patient` value. A change to the
+derivation splits every person a store holds, so it is breaking and the
+CHANGELOG documents both derivations.
+
 ## Tests are offline, always
 
 `cargo test` reads no real keychain item or browser profile, stores no
@@ -105,14 +114,15 @@ with `named_profile_exists_in` and `forget_named_profile_in` under a temp dir.
 
 - `tests/cli_surface.rs`: every `--help`, exit codes, JSON errors, argument
   checks before anything is read, profile selection, `NO_COLOR`, a per-test
-  `XDG_CONFIG_HOME`.
+  `XDG_CONFIG_HOME`, and `patients label` end to end on a config.
 - `tests/site_e2e.rs`: the reads and the export in-process against a
   loopback server answering with `tests/fixtures/site/` and playing Okta's
   renewal: the stream's resources, skips and spelling, the paths of a
   dependent's and a linked account's results, renewal from an expired
   token and from a 401, an ended Okta session, a refusal partway, a 403 on
   one result, a 429, `--since`, and a result whose `pid` names nobody in a
-  one-person household.
+  one-person household; and the people a read lists kept in the config,
+  with their labels reaching the stream header.
 - `tests/no_personal_data.rs`: the shapes in every tracked file, and every
   identity field in the fixtures against `tests/fixtures/README.md`.
 
