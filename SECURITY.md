@@ -32,7 +32,12 @@ Report a vulnerability privately through GitHub's "Report a vulnerability"
 - `auth logout --profile <NAME>` and `profiles remove <NAME>` remove that
   profile's session, then its Chrome profile. `auth reset` removes every
   session and the vault key.
-- The config file holds the profile names only.
+- The config file (`0600`) holds the profile names and, per profile, the
+  patient ids and labels of the people a read has listed: no Labcorp id,
+  no name, no secret. A patient id is a digest of Labcorp's id and is
+  handled as that id, so the file is identifying. `config show` prints how
+  many people each profile has listed and labelled, not their ids or
+  labels.
 
 ## What labcorp never does
 

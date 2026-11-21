@@ -194,7 +194,15 @@ impl<'k> Site<'k> {
         };
         let mut people = portal::household(&account, &linked)?;
         if let Some((store, profile)) = &self.labels {
-            crate::labels::record(store, profile, &mut people)?;
+            // Labels are what `--patient` may name, not what a read needs:
+            // a config that cannot be read or written leaves the people
+            // unlabelled, with a warning that repeats nothing from it.
+            if crate::labels::record(store, profile, &mut people).is_err() {
+                self.warn(format!(
+                    "labcorp could not read or keep this profile's people in its config (`{BIN} config path`); \
+                     their labels are left out"
+                ));
+            }
         }
         Ok(people)
     }

@@ -158,7 +158,7 @@ host is exit 2 before anything is sent. `docs/api.md` lists the reads.
 | `documents list`, `documents download <ID>\|--all` | the report PDFs (`documents/v1`) |
 | `records export --patient <ID> --ndjson` | one person's results as `records-stream/v1` on stdout; `--since D`, `--no-pdfs`. `-o DIR` writes it to `DIR/records.ndjson` instead, for development only: real records go straight into medrec |
 | `api GET <PATH> --profile <NAME>` | one read of the portal API |
-| `config path\|show` | the config file (profile names only; no secret) |
+| `config path\|show` | the config file: profiles, and how many people each has listed and labelled (no secret) |
 | `info` | `cli-info/v1` |
 | `self-update`, `completions <SHELL>` | |
 
@@ -174,7 +174,11 @@ Every command takes `-q`, and every command but `records export --ndjson` takes 
   the device: `~/Library/Application Support/piekstra.labcorp/browser-profile-<NAME>`.
   Its site storage is cleared on each launch; `--fresh-profile` signs in
   without it.
-- The config: `~/.config/labcorp/config.json`, profile names only.
+- The config: `~/.config/labcorp/config.json`, written `0600`: the profile
+  names, and per profile the patient ids and labels of the people a read
+  has listed. No Labcorp id, no name, no secret. A patient id is handled as
+  the Labcorp id it comes from, so keep the file to yourself; `config show`
+  prints counts in place of the ids and labels.
 
 ## Licence
 

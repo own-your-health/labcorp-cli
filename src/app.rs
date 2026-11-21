@@ -18,7 +18,9 @@ const REPO: &str = "piekstra/labcorp-cli";
 /// `info`'s profiles: health-records/v1 and documents/v1.
 pub const PROFILES: &[&str] = &[pk_med_records::PROFILE, pk_cli_documents::PROFILE];
 
-/// The config file: the profiles, by name. No secret is ever in it.
+/// The config file: the profiles by name, and in each profile's settings
+/// the people a read has listed, by patient id, with the household's labels
+/// for them ([`crate::labels`]). No secret, Labcorp id or name is in it.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     /// The Labcorp Patient logins, one per account (`labcorp profiles add
@@ -253,6 +255,7 @@ fn config(ctx: &Ctx, cmd: &ConfigCmd) -> Result<(), CliError> {
         ConfigCmd::Show => {
             let cfg: Config = ctx.store.load()?;
             let mut v = serde_json::to_value(&cfg).unwrap_or_default();
+            crate::labels::summarize(&mut v);
             if ctx.json() {
                 v["schema"] = "config/v1".into();
                 output::json(&v);

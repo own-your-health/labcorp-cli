@@ -479,3 +479,22 @@ fn patients_label_for_no_one_listed_is_exit_4_and_repeats_nothing() {
         assert!(text.contains("patients list"), "{text}");
     }
 }
+
+#[test]
+fn config_show_prints_counts_not_patient_ids_or_labels() {
+    for json in [true, false] {
+        let mut cmd = labcorp_in(config_with_people());
+        if json {
+            cmd.arg("--json");
+        }
+        let out = cmd.args(["config", "show"]).assert().success();
+        let text = String::from_utf8_lossy(&out.get_output().stdout).to_string();
+        assert!(!text.contains(ME) && !text.contains(KID), "{text}");
+        assert!(!text.contains("\"me\"") && !text.contains(" me\n"), "{text}");
+        if json {
+            let v: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(v["profiles"]["adult1"]["members"]["people"], 2, "{v}");
+            assert_eq!(v["profiles"]["adult1"]["members"]["labelled"], 1, "{v}");
+        }
+    }
+}

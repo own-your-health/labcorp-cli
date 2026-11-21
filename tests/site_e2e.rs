@@ -979,3 +979,28 @@ fn a_read_keeps_the_people_it_lists_and_their_labels_reach_the_stream() {
     assert_eq!(header.patient.label.as_deref(), Some("kid"));
     std::fs::remove_dir_all(&dir).ok();
 }
+
+#[test]
+fn a_config_that_cannot_keep_the_people_does_not_stop_a_read() {
+    let server = Server::start();
+    let kept = Kept::default();
+    let dir = std::env::temp_dir().join(format!("labcorp-e2e-badconfig-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.json");
+    // A members entry that does not read as one.
+    std::fs::write(&path, r#"{"profiles":{"adult1":{"members":{"x":5}}}}"#).unwrap();
+    let client = Client::new(&profile(), session(LIVE, FAR, None), &kept, server.endpoints()).unwrap();
+    let store = pk_cli_config::ConfigStore::new("labcorp").with_override(Some(path.clone()));
+    let mut site = Site::new(client, true).with_labels(store, profile());
+    let people = site.household().unwrap();
+    assert_eq!(people.len(), 3);
+    assert!(people.iter().all(|p| p.label.is_none()));
+    assert_eq!(site.warnings.len(), 1, "{:?}", site.warnings);
+    assert!(site.warnings[0].contains("config path"), "{:?}", site.warnings);
+    // The config is left as it was.
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        r#"{"profiles":{"adult1":{"members":{"x":5}}}}"#
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}

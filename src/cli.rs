@@ -276,6 +276,8 @@ pub struct ApiArgs {
 pub enum ConfigCmd {
     /// Print the config file path.
     Path,
-    /// Show the configuration (the profiles; it holds no secret).
+    /// Show the configuration: the profiles, and for each how many people a
+    /// read has listed and how many have a label (their ids and labels are
+    /// in `labcorp patients list`). It holds no secret.
     Show,
 }

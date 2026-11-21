@@ -80,6 +80,50 @@ impl Members {
     }
 }
 
+/// The config's write lock, held until the file it returns is dropped: an
+/// exclusive advisory lock on `<config>.lock` beside the config. Every
+/// write of the config's people (a read's [`record`], `patients label`)
+/// loads, changes and saves under it, so two labcorp processes (an export
+/// beside a `patients label`, or exports of two profiles at once) never
+/// save over each other's change.
+fn lock(store: &ConfigStore) -> Result<std::fs::File, CliError> {
+    let path = store.path()?;
+    let mut name = path
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| "config.json".into());
+    name.push(".lock");
+    let lock = path.with_file_name(name);
+    let fail = |e: std::io::Error| CliError::Other(format!("locking labcorp's config ({}): {e}", lock.display()));
+    if let Some(dir) = lock.parent() {
+        std::fs::create_dir_all(dir).map_err(fail)?;
+    }
+    let mut open = std::fs::OpenOptions::new();
+    open.create(true).truncate(false).write(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut open, 0o600);
+    let file = open.open(&lock).map_err(fail)?;
+    file.lock().map_err(fail)?;
+    Ok(file)
+}
+
+/// `config show`'s view of a profile's settings: how many people a read
+/// has listed and how many have a label, never their ids or labels
+/// (`patients list` shows those, on the person's own terminal).
+pub fn summarize(config: &mut serde_json::Value) {
+    let Some(profiles) = config.get_mut("profiles").and_then(|p| p.as_object_mut()) else {
+        return;
+    };
+    for settings in profiles.values_mut() {
+        let Some(members) = settings.get("members").and_then(|m| m.as_object()) else {
+            continue;
+        };
+        let labelled = members.values().filter(|m| m.get("label").is_some()).count();
+        let summary = serde_json::json!({ "people": members.len(), "labelled": labelled });
+        settings["members"] = summary;
+    }
+}
+
 fn relationship(p: &Person) -> &'static str {
     match p.kind {
         Kind::Account => pk_med_records::dto::relationship::SELF,
@@ -112,6 +156,7 @@ pub fn record(store: &ConfigStore, profile: &ProfileName, people: &mut [Person])
     if !changed {
         return Ok(());
     }
+    let _lock = lock(store)?;
     let mut config = store.load::<Config>()?;
     let mut fresh: Members = config.profiles.settings(profile)?;
     for (id, m) in fresh.members.iter_mut() {
@@ -144,6 +189,7 @@ pub fn run(
         (None, true) => None,
         _ => return Err(CliError::Usage("give a label or --clear, one of the two".into())),
     };
+    let _lock = lock(store)?;
     let mut config = store.load::<Config>()?;
     let before: Members = config.profiles.settings(profile)?;
     let mut members = before.clone();
@@ -314,6 +360,57 @@ mod tests {
         assert_eq!(adult1["members"][&id]["relationship"], "self", "{raw}");
         assert_eq!(read[0].label.as_deref(), Some("me"));
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reads_of_several_profiles_at_once_lose_none_of_their_people() {
+        let names: Vec<String> = (0..8).map(|i| format!("p{i}")).collect();
+        let profiles: serde_json::Map<String, serde_json::Value> =
+            names.iter().map(|n| (n.clone(), serde_json::json!({}))).collect();
+        let (dir, _) = store("race", &serde_json::json!({ "profiles": profiles }).to_string());
+        let path = dir.join("config.json");
+        let start = std::sync::Arc::new(std::sync::Barrier::new(names.len()));
+        let threads: Vec<_> = names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let (path, start, n) = (path.clone(), start.clone(), n.clone());
+                std::thread::spawn(move || {
+                    let store = ConfigStore::new(BIN).with_override(Some(path));
+                    let profile = ProfileName::parse(&n).unwrap();
+                    let mut people = vec![person(&i.to_string(), Kind::Account)];
+                    start.wait();
+                    record(&store, &profile, &mut people).unwrap();
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().unwrap();
+        }
+        let store = ConfigStore::new(BIN).with_override(Some(path));
+        let config = store.load::<Config>().unwrap();
+        for (i, n) in names.iter().enumerate() {
+            let members: Members = config.profiles.settings(&ProfileName::parse(n).unwrap()).unwrap();
+            let id = fhir::patient_id(&person(&i.to_string(), Kind::Account));
+            assert!(members.members.contains_key(&id), "{n} lost its person");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn config_show_counts_people_and_shows_no_id_or_label() {
+        let mut v = serde_json::json!({ "profiles": {
+            "adult1": { "members": { "l0000000000000001": { "label": "me" }, "l0000000000000002": {} } },
+            "adult2": {},
+        } });
+        summarize(&mut v);
+        assert_eq!(
+            v["profiles"]["adult1"]["members"],
+            serde_json::json!({ "people": 2, "labelled": 1 })
+        );
+        assert_eq!(v["profiles"]["adult2"], serde_json::json!({}));
+        let text = v.to_string();
+        assert!(!text.contains("l000") && !text.contains("\"me\""), "{text}");
     }
 
     #[test]
