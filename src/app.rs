@@ -185,11 +185,15 @@ fn profiles_cmd(ctx: &Ctx, cmd: &ProfilesCmd) -> Result<(), CliError> {
         }
         ProfilesCmd::Add { name } => {
             let name = ProfileName::parse(name)?;
-            let mut cfg: Config = ctx.store.load()?;
-            let added = cfg.profiles.add(name.clone());
-            if added {
-                ctx.store.save(&cfg)?;
-            }
+            let added = {
+                let _lock = crate::labels::lock(&ctx.store)?;
+                let mut cfg: Config = ctx.store.load()?;
+                let added = cfg.profiles.add(name.clone());
+                if added {
+                    ctx.store.save(&cfg)?;
+                }
+                added
+            };
             output::emit(
                 ctx.json(),
                 "profile-add",
@@ -217,9 +221,12 @@ fn profiles_cmd(ctx: &Ctx, cmd: &ProfilesCmd) -> Result<(), CliError> {
                 &format!("Remove profile {name}, its stored session and its browser profile?"),
             )?;
             let done = crate::auth::forget_login(&name)?;
-            let mut cfg: Config = ctx.store.load()?;
-            cfg.profiles.remove(&name);
-            ctx.store.save(&cfg)?;
+            {
+                let _lock = crate::labels::lock(&ctx.store)?;
+                let mut cfg: Config = ctx.store.load()?;
+                cfg.profiles.remove(&name);
+                ctx.store.save(&cfg)?;
+            }
             let mut v = json!({ "profile": name.as_str(), "session_removed": done.session_removed });
             if let Some(removed) = done.browser_profile_removed {
                 v["browser_profile_removed"] = removed.into();

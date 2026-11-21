@@ -82,11 +82,12 @@ impl Members {
 
 /// The config's write lock, held until the file it returns is dropped: an
 /// exclusive advisory lock on `<config>.lock` beside the config. Every
-/// write of the config's people (a read's [`record`], `patients label`)
-/// loads, changes and saves under it, so two labcorp processes (an export
-/// beside a `patients label`, or exports of two profiles at once) never
-/// save over each other's change.
-fn lock(store: &ConfigStore) -> Result<std::fs::File, CliError> {
+/// write of the config (a read's [`record`], `patients label`, `profiles
+/// add` and `profiles remove`) loads, changes and saves under it, so two
+/// labcorp processes (an export beside a `patients label`, exports of two
+/// profiles at once, a profile added meanwhile) never save over each
+/// other's change.
+pub(crate) fn lock(store: &ConfigStore) -> Result<std::fs::File, CliError> {
     let path = store.path()?;
     let mut name = path
         .file_name()
