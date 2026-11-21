@@ -18,7 +18,9 @@ const REPO: &str = "piekstra/labcorp-cli";
 /// `info`'s profiles: health-records/v1 and documents/v1.
 pub const PROFILES: &[&str] = &[pk_med_records::PROFILE, pk_cli_documents::PROFILE];
 
-/// The config file: the profiles, by name. No secret is ever in it.
+/// The config file: the profiles by name, and in each profile's settings
+/// the people a read has listed, by patient id, with the household's labels
+/// for them ([`crate::labels`]). No secret, Labcorp id or name is in it.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
     /// The Labcorp Patient logins, one per account (`labcorp profiles add
@@ -97,6 +99,11 @@ pub fn run(cli: &Cli) -> Result<(), CliError> {
             source::no_profile(cli, "config")?;
             config(&ctx, cmd)
         }
+        Command::Patients(PatientsCmd::Label(args)) => {
+            // The profile's settings alone: no vault, no request.
+            let profile = source::login_profile(cli, &ctx.profiles()?)?;
+            crate::labels::run(&ctx.store, &profile, args, ctx.json(), ctx.quiet())
+        }
         Command::Patients(_) | Command::Records(_) | Command::Results(_) | Command::Documents(_) | Command::Api(_) => {
             // The command's own arguments first, so a bad one reaches neither
             // the vault nor the site.
@@ -128,8 +135,8 @@ pub fn run(cli: &Cli) -> Result<(), CliError> {
 }
 
 /// `info`: cli-info/v1, with the health-records/v1 and documents/v1
-/// profiles, and `login-profiles` since every command that reads records
-/// takes `--profile`.
+/// profiles, `login-profiles` since every command that reads records takes
+/// `--profile`, and `patient-labels` for `patients label`.
 pub fn info() -> CliInfo {
     CliInfo::new(
         BIN,
@@ -148,6 +155,7 @@ pub fn info() -> CliInfo {
             "documents",
             "api",
             pk_med_records::LOGIN_PROFILES,
+            pk_med_records::PATIENT_LABELS,
         ],
     )
     .with_profiles(PROFILES)
@@ -177,11 +185,15 @@ fn profiles_cmd(ctx: &Ctx, cmd: &ProfilesCmd) -> Result<(), CliError> {
         }
         ProfilesCmd::Add { name } => {
             let name = ProfileName::parse(name)?;
-            let mut cfg: Config = ctx.store.load()?;
-            let added = cfg.profiles.add(name.clone());
-            if added {
-                ctx.store.save(&cfg)?;
-            }
+            let added = {
+                let _lock = crate::labels::lock(&ctx.store)?;
+                let mut cfg: Config = ctx.store.load()?;
+                let added = cfg.profiles.add(name.clone());
+                if added {
+                    ctx.store.save(&cfg)?;
+                }
+                added
+            };
             output::emit(
                 ctx.json(),
                 "profile-add",
@@ -209,9 +221,12 @@ fn profiles_cmd(ctx: &Ctx, cmd: &ProfilesCmd) -> Result<(), CliError> {
                 &format!("Remove profile {name}, its stored session and its browser profile?"),
             )?;
             let done = crate::auth::forget_login(&name)?;
-            let mut cfg: Config = ctx.store.load()?;
-            cfg.profiles.remove(&name);
-            ctx.store.save(&cfg)?;
+            {
+                let _lock = crate::labels::lock(&ctx.store)?;
+                let mut cfg: Config = ctx.store.load()?;
+                cfg.profiles.remove(&name);
+                ctx.store.save(&cfg)?;
+            }
             let mut v = json!({ "profile": name.as_str(), "session_removed": done.session_removed });
             if let Some(removed) = done.browser_profile_removed {
                 v["browser_profile_removed"] = removed.into();
@@ -247,6 +262,7 @@ fn config(ctx: &Ctx, cmd: &ConfigCmd) -> Result<(), CliError> {
         ConfigCmd::Show => {
             let cfg: Config = ctx.store.load()?;
             let mut v = serde_json::to_value(&cfg).unwrap_or_default();
+            crate::labels::summarize(&mut v);
             if ctx.json() {
                 v["schema"] = "config/v1".into();
                 output::json(&v);

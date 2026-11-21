@@ -375,6 +375,21 @@ fn export_since(server: &Server, s: Session, kept: &Kept, who: &str, since: Opti
     }
 }
 
+/// The patient id labcorp derives for the person Labcorp knows by `id`.
+fn patient_id(id: &str) -> String {
+    labcorp::fhir::patient_id(&labcorp::portal::Person {
+        id: id.into(),
+        kind: labcorp::portal::Kind::Account,
+        linked_id: None,
+        first_name: None,
+        middle_name: None,
+        last_name: None,
+        birth_date: None,
+        gender: None,
+        label: None,
+    })
+}
+
 /// The resources and the trailer of one person's whole export.
 fn export(server: &Server, s: Session, kept: &Kept, who: &str) -> (Vec<Value>, Trailer) {
     let e = export_since(server, s, kept, who, None);
@@ -432,7 +447,9 @@ fn an_export_carries_the_persons_results_values_and_pdfs() {
         assert_eq!(r["meta"]["source"], "labcorp:portal", "{}", r["resourceType"]);
     }
     let patient = of(&rs, "Patient")[0];
-    assert_eq!(patient["id"], "lcp-SYNP000001");
+    assert_eq!(patient["id"].as_str(), Some(patient_id("SYNP000001").as_str()));
+    // A digest of Labcorp's id, never the id itself.
+    assert!(!patient["id"].as_str().unwrap().contains("SYNP"), "{}", patient["id"]);
     assert_eq!(patient["birthDate"], "1990-01-01");
     let reports = of(&rs, "DiagnosticReport");
     let r1 = reports.iter().find(|r| r["id"] == "lcr-SYNR00000001").unwrap();
@@ -651,7 +668,7 @@ fn since_takes_results_reported_or_collected_from_that_day_and_the_undated() {
     assert!(e.trailer.complete);
     assert_eq!(ids(&e.resources, "DiagnosticReport"), ["lcr-SYNR00000001"]);
     assert_eq!(skips(&e.trailer), [("lcr-SYNR00000002".into(), "not_ready".into())]);
-    assert_eq!(ids(&e.resources, "Patient"), ["lcp-SYNP000001"]);
+    assert_eq!(ids(&e.resources, "Patient"), [patient_id("SYNP000001").as_str()]);
     assert_eq!(e.header.since.as_deref(), Some("2026-03-05"));
     assert_eq!(e.header.since_unbounded, ["Organization", "Patient"]);
     // A day after both of SYNR00000001's leaves it out.
@@ -917,4 +934,73 @@ fn the_final_report_replaces_the_preliminary_one_in_the_store() {
     for id in ["lcb-SYNR00000001", "lcd-SYNR00000001"] {
         assert_eq!(filed(&late, id).0.raw, filed(&again, id).0.raw, "{id}");
     }
+}
+
+#[test]
+fn a_read_keeps_the_people_it_lists_and_their_labels_reach_the_stream() {
+    let server = Server::start();
+    let kept = Kept::default();
+    let dir = std::env::temp_dir().join(format!("labcorp-e2e-labels-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.json");
+    std::fs::write(&path, r#"{"profiles":{"adult1":{}}}"#).unwrap();
+    let store = || pk_cli_config::ConfigStore::new("labcorp").with_override(Some(path.clone()));
+    let site = |s| {
+        let client = Client::new(&profile(), s, &kept, server.endpoints()).unwrap();
+        Site::new(client, true).with_labels(store(), profile())
+    };
+    // The read lists the account, its dependent and the accepted linked
+    // account, by patient id alone.
+    let people = site(session(LIVE, FAR, None)).household().unwrap();
+    assert_eq!(people.len(), 3);
+    let raw = std::fs::read_to_string(&path).unwrap();
+    let v: Value = serde_json::from_str(&raw).unwrap();
+    let members = v["profiles"]["adult1"]["members"].as_object().unwrap();
+    let sam = patient_id("SYNP000002");
+    assert_eq!(members.len(), 3, "{raw}");
+    assert_eq!(members[&sam]["relationship"], "proxy", "{raw}");
+    for leaked in ["SYNP", "Alex", "Sam", "Jordan", "EXAMPLE"] {
+        assert!(!raw.contains(leaked), "{leaked} in the config: {raw}");
+    }
+    // A label set afterwards reaches the stream header's patient.
+    let mut v = v;
+    v["profiles"]["adult1"]["members"][&sam]["label"] = "kid".into();
+    std::fs::write(&path, v.to_string()).unwrap();
+    let mut s = site(session(LIVE, FAR, None));
+    let people = s.household().unwrap();
+    let p = people.iter().find(|p| p.id == "SYNP000002").unwrap().clone();
+    assert_eq!(p.label.as_deref(), Some("kid"));
+    let headers = s.headers().unwrap();
+    let mut out = Vec::new();
+    commands::stream(&mut s, &people, &p, headers, None, true, &mut out).unwrap();
+    let mut reader = RecordsReader::new(std::io::Cursor::new(out));
+    let header = reader.header().unwrap();
+    assert_eq!(header.patient.id, sam);
+    assert_eq!(header.patient.label.as_deref(), Some("kid"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn a_config_that_cannot_keep_the_people_does_not_stop_a_read() {
+    let server = Server::start();
+    let kept = Kept::default();
+    let dir = std::env::temp_dir().join(format!("labcorp-e2e-badconfig-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.json");
+    // A members entry that does not read as one.
+    std::fs::write(&path, r#"{"profiles":{"adult1":{"members":{"x":5}}}}"#).unwrap();
+    let client = Client::new(&profile(), session(LIVE, FAR, None), &kept, server.endpoints()).unwrap();
+    let store = pk_cli_config::ConfigStore::new("labcorp").with_override(Some(path.clone()));
+    let mut site = Site::new(client, true).with_labels(store, profile());
+    let people = site.household().unwrap();
+    assert_eq!(people.len(), 3);
+    assert!(people.iter().all(|p| p.label.is_none()));
+    assert_eq!(site.warnings.len(), 1, "{:?}", site.warnings);
+    assert!(site.warnings[0].contains("config path"), "{:?}", site.warnings);
+    // The config is left as it was.
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        r#"{"profiles":{"adult1":{"members":{"x":5}}}}"#
+    );
+    std::fs::remove_dir_all(&dir).ok();
 }

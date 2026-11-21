@@ -78,7 +78,8 @@ labcorp auth login --browser --profile me
 labcorp auth status --profile me            # stored? token good until? sends nothing
 
 # 3. Who this account reads, and their results.
-labcorp patients list --profile me          # ids such as lcp-<id>
+labcorp patients list --profile me          # an id for each person, and their label
+labcorp patients label --profile me --patient <ID> kid   # the household's own name for one
 labcorp results list --profile me --patient <ID> --since 2026-01-01
 labcorp results get <RESULT ID> --profile me            # every value, flag and range
 labcorp documents download --all -o ~/Labcorp --profile me   # the report PDFs
@@ -92,9 +93,12 @@ medrec --profile <FOLDER> import --from labcorp --from-profile me --patient <ID>
 labcorp records export --profile me --patient <ID> --ndjson | <READER>
 ```
 
-`--patient` takes an id from `patients list`, Labcorp's own id, or a first
-name only one person has. It may be left out when the account shows one
-person. `records export --since D` takes results reported or collected on
+`--patient` takes an id from `patients list`, or the label `patients
+label` gave the person. It never takes a name: a name on the command line
+stays in shell history and in the transcript of any agent that runs the
+command, and a label stands in for it. `--patient` may be left out when the
+account shows one person. A label is unique on its profile, is never a
+person's id, and is kept in labcorp's config with no name beside it. `records export --since D` takes results reported or collected on
 or after D; `results list --since D` goes by the collection day.
 `docs/fhir.md` describes the FHIR the export writes.
 
@@ -147,13 +151,14 @@ host is exit 2 before anything is sent. `docs/api.md` lists the reads.
 | `auth status --profile <NAME>` | whether a session is stored and until when its token is good; sends nothing (`auth-status/v1`) |
 | `auth logout --profile <NAME>` | remove the session, then the kept browser profile (`auth-logout/v1`) |
 | `auth reset` | remove every session and the vault's key (`auth-reset/v1`) |
-| `patients list` | everyone the login reads (`patient-list/v1`) |
+| `patients list` | everyone the login reads, with their labels (`patient-list/v1`) |
+| `patients label --patient <ID> (<WHO> \| --clear)` | set or clear the household's own name for one of them; makes no request (`patient-list/v1`) |
 | `results list [--patient ID] [--since D] [--until D]` | results, newest collection first (`result-list/v1`) |
 | `results get <ID>` | one result with its values (`result/v1`) |
 | `documents list`, `documents download <ID>\|--all` | the report PDFs (`documents/v1`) |
 | `records export --patient <ID> --ndjson` | one person's results as `records-stream/v1` on stdout; `--since D`, `--no-pdfs`. `-o DIR` writes it to `DIR/records.ndjson` instead, for development only: real records go straight into medrec |
 | `api GET <PATH> --profile <NAME>` | one read of the portal API |
-| `config path\|show` | the config file (profile names only; no secret) |
+| `config path\|show` | the config file: profiles, and how many people each has listed and labelled (no secret) |
 | `info` | `cli-info/v1` |
 | `self-update`, `completions <SHELL>` | |
 
@@ -169,7 +174,11 @@ Every command takes `-q`, and every command but `records export --ndjson` takes 
   the device: `~/Library/Application Support/piekstra.labcorp/browser-profile-<NAME>`.
   Its site storage is cleared on each launch; `--fresh-profile` signs in
   without it.
-- The config: `~/.config/labcorp/config.json`, profile names only.
+- The config: `~/.config/labcorp/config.json`, written `0600`: the profile
+  names, and per profile the patient ids and labels of the people a read
+  has listed. No Labcorp id, no name, no secret. A patient id is handled as
+  the Labcorp id it comes from, so keep the file to yourself; `config show`
+  prints counts in place of the ids and labels.
 
 ## Licence
 

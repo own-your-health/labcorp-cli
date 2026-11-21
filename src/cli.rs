@@ -138,16 +138,36 @@ pub enum ProfilesCmd {
 
 #[derive(Subcommand, Debug)]
 pub enum PatientsCmd {
-    /// List the people (patient-list/v1).
+    /// List the people, with the household's labels for them
+    /// (patient-list/v1).
     #[command(visible_alias = "ls")]
     List,
+    /// Set or clear the household's own name for one person on the profile
+    /// (patient-list/v1 with that person). `--patient` then takes the label.
+    /// Makes no request: it knows the people `patients list` has read.
+    Label(LabelArgs),
+}
+
+#[derive(Args, Debug)]
+pub struct LabelArgs {
+    /// The person: their id from `labcorp patients list`, or their current
+    /// label.
+    #[arg(long, value_name = "ID")]
+    pub patient: String,
+    /// The household's name for them: unique on the profile, and not a
+    /// person's id.
+    #[arg(value_name = "WHO", conflicts_with = "clear")]
+    pub who: Option<String>,
+    /// Remove their label.
+    #[arg(long)]
+    pub clear: bool,
 }
 
 #[derive(Args, Debug, Clone)]
 pub struct PatientArg {
-    /// A person: their id from `labcorp patients list`, Labcorp's own id for
-    /// them, or their first name. May be omitted when the login shows one
-    /// person.
+    /// A person: their id from `labcorp patients list`, or the label
+    /// `labcorp patients label` gave them. Never a name. May be omitted when
+    /// the login shows one person.
     #[arg(long, value_name = "ID")]
     pub patient: Option<String>,
 }
@@ -256,6 +276,8 @@ pub struct ApiArgs {
 pub enum ConfigCmd {
     /// Print the config file path.
     Path,
-    /// Show the configuration (the profiles; it holds no secret).
+    /// Show the configuration: the profiles, and for each how many people a
+    /// read has listed and how many have a label (their ids and labels are
+    /// in `labcorp patients list`). It holds no secret.
     Show,
 }

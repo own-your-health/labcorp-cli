@@ -6,8 +6,9 @@
 //! (medical-common DESIGN.md §1.4, §1.7).
 //!
 //! Every id derives from Labcorp's own ids, so a re-export carries the same
-//! ids and the store merges it: `lcp-` a person, `lcr-` a result, `lco-` an
-//! observation, `lcd-` and `lcb-` the report's document and file. Every
+//! ids and the store merges it: `lcr-` a result, `lco-` an observation,
+//! `lcd-` and `lcb-` the report's document and file. A person's id is a
+//! digest of Labcorp's patient id ([`patient_id`]), never the id itself. Every
 //! resource carries `meta.source` [`META_SOURCE`] and the tag
 //! [`TAG_MAPPED`]. A value keeps its written spelling (`1.50` stays `1.50`):
 //! [`resource`] writes the JSON with each number's own text.
@@ -74,8 +75,30 @@ pub fn id(prefix: &str, parts: &[&str]) -> String {
     format!("{prefix}-{}", &hex[..40])
 }
 
+/// A person's `Patient.id`, which `--patient` takes: `l` and the first 16
+/// hex digits of SHA-256 over `labcorp` and Labcorp's patient id, each
+/// written as its length in bytes and `:` before it (medical-common
+/// DESIGN.md §1.3). Every login that reads the person sees the same patient
+/// id, so a dependent read from a parent's account and from their own gets
+/// one id. The digest keeps Labcorp's id out of listings, stream headers,
+/// `--patient` arguments and a store's folders. It is still handled as the
+/// id it comes from: never in an error message, a log line or a fixture.
 pub fn patient_id(p: &Person) -> String {
-    id("lcp", &[&p.id])
+    digest_id("l", &["labcorp", &p.id], 16)
+}
+
+/// `prefix` and the first `hex` hex digits of SHA-256 of `parts`, each
+/// part written as its length and `:` before it, so two different lists of
+/// parts never run together into one input.
+fn digest_id(prefix: &str, parts: &[&str], hex: usize) -> String {
+    let mut sha = Sha256::new();
+    for part in parts {
+        sha.update(part.len().to_string().as_bytes());
+        sha.update(b":");
+        sha.update(part.as_bytes());
+    }
+    let digits: String = sha.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    format!("{prefix}{}", &digits[..hex])
 }
 
 pub fn report_id(h: &Header) -> String {
@@ -655,6 +678,7 @@ mod tests {
             last_name: Some("Example".into()),
             birth_date: Some("1990-01-01".into()),
             gender: Some("FEMALE".into()),
+            label: None,
         }
     }
 
@@ -701,6 +725,25 @@ mod tests {
         let a = id("lcr", &[&long]);
         assert_eq!(a.len(), 44);
         assert_eq!(a, id("lcr", &[&long]));
+    }
+
+    #[test]
+    fn a_patient_id_is_a_digest_of_labcorps_id() {
+        let mut p = person();
+        let a = patient_id(&p);
+        assert_eq!(a.len(), 17);
+        assert!(
+            a.starts_with('l') && a[1..].bytes().all(|b| b.is_ascii_hexdigit()),
+            "{a}"
+        );
+        assert!(!a.contains(&p.id), "{a}");
+        // Stable, and only Labcorp's id goes into it: not the name.
+        p.first_name = Some("Sam".into());
+        assert_eq!(patient_id(&p), a);
+        p.id = "2".into();
+        assert_ne!(patient_id(&p), a);
+        // Length-prefixed: parts that join to the same text differ.
+        assert_ne!(digest_id("l", &["ab", "c"], 16), digest_id("l", &["a", "bc"], 16));
     }
 
     #[test]

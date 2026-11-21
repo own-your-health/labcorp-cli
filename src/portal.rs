@@ -98,6 +98,9 @@ pub struct Person {
     pub birth_date: Option<String>,
     /// As the site writes it (`MALE`, `FEMALE`, `UNKNOWN`).
     pub gender: Option<String>,
+    /// The household's own name for the person (`labcorp patients label`),
+    /// from the profile's settings; never read from Labcorp.
+    pub label: Option<String>,
 }
 
 impl Person {
@@ -111,6 +114,7 @@ impl Person {
             last_name: text(v, "lastName"),
             birth_date: text(v, "dateOfBirth").and_then(|d| day(&d)),
             gender: text(v, "gender"),
+            label: None,
         }
     }
 

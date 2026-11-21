@@ -100,7 +100,10 @@ pub(crate) fn run(ctx: &Ctx, profile: &ProfileName) -> Result<(), CliError> {
     let store = SessionStore::open()?;
     let session = store.load(profile)?;
     let client = Client::new(profile, session, &store, Endpoints::default())?;
-    let mut site = Site::new(client, ctx.quiet());
+    let mut site = Site::new(client, ctx.quiet()).with_labels(
+        pk_cli_config::ConfigStore::new(BIN).with_override(ctx.cli.config.clone()),
+        profile.clone(),
+    );
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
     match &ctx.cli.command {
@@ -129,6 +132,7 @@ pub(crate) fn run(ctx: &Ctx, profile: &ProfileName) -> Result<(), CliError> {
             }
             Ok(())
         }
+        Command::Patients(PatientsCmd::Label(_)) => unreachable!("app::run runs `patients label` itself"),
         _ => unreachable!("app::run sends only the commands that read as a profile here"),
     }
 }
@@ -142,6 +146,9 @@ pub struct Site<'k> {
     /// to stderr unless `quiet`.
     pub warnings: Vec<String>,
     quiet: bool,
+    /// Where the profile's labels are kept, when the reads label the people
+    /// they list ([`crate::labels::record`]).
+    labels: Option<(pk_cli_config::ConfigStore, ProfileName)>,
 }
 
 impl<'k> Site<'k> {
@@ -150,7 +157,15 @@ impl<'k> Site<'k> {
             client,
             warnings: Vec::new(),
             quiet,
+            labels: None,
         }
+    }
+
+    /// Give the people each read lists the labels `profile` holds for them,
+    /// and keep the people listed in its settings.
+    pub fn with_labels(mut self, store: pk_cli_config::ConfigStore, profile: ProfileName) -> Site<'k> {
+        self.labels = Some((store, profile));
+        self
     }
 
     fn warn(&mut self, msg: String) {
@@ -177,7 +192,19 @@ impl<'k> Site<'k> {
             }
             Err(e) => return Err(e),
         };
-        portal::household(&account, &linked)
+        let mut people = portal::household(&account, &linked)?;
+        if let Some((store, profile)) = &self.labels {
+            // Labels are what `--patient` may name, not what a read needs:
+            // a config that cannot be read or written leaves the people
+            // unlabelled, with a warning that repeats nothing from it.
+            if crate::labels::record(store, profile, &mut people).is_err() {
+                self.warn(format!(
+                    "labcorp could not read or keep this profile's people in its config (`{BIN} config path`); \
+                     their labels are left out"
+                ));
+            }
+        }
+        Ok(people)
     }
 
     /// Every result's header, for everyone the account reads.
@@ -278,7 +305,7 @@ pub fn context(p: &Person, with_name: bool) -> PatientContext {
     PatientContext {
         id: fhir::patient_id(p),
         organization: fhir::ORGANIZATION_ID.into(),
-        label: None,
+        label: p.label.clone(),
         relationship: Some(
             match p.kind {
                 Kind::Account => relationship::SELF,
@@ -294,46 +321,49 @@ pub fn context(p: &Person, with_name: bool) -> PatientContext {
     }
 }
 
-/// The person `--patient` names: a `patients list` id, Labcorp's own id, or
-/// a first name only one person has. Without it, the only person, or with
-/// `all`, nobody in particular (`None`).
+/// The person `--patient` names: their id from `patients list`, or their
+/// label, case aside (medical-common DESIGN.md §1). Never a name Labcorp
+/// shows, nor Labcorp's own id: either would stay in shell history and in
+/// an agent's transcript. Without it, the only person, or with `all`,
+/// nobody in particular (`None`). An error names nobody by id and does not
+/// repeat the `--patient` value, which is handled as the id it may be
+/// (§1.3).
 fn pick<'a>(people: &'a [Person], who: &PatientArg, all: bool) -> Result<Option<&'a Person>, CliError> {
     let Some(q) = who.patient.as_deref().map(str::trim) else {
         return match people {
             [one] => Ok(Some(one)),
             _ if all => Ok(None),
             _ => Err(CliError::Usage(format!(
-                "this login shows {} people; name one with --patient <ID> (`{BIN} patients list`): {}",
-                people.len(),
-                ids(people)
-            ))),
+                "this login shows {} people; name one with --patient <ID or LABEL>",
+                people.len()
+            ))
+            .with_remedy(format!("`{BIN} patients list` lists them"))),
         };
     };
-    if let Some(p) = people.iter().find(|p| fhir::patient_id(p) == q || p.id == q) {
-        return Ok(Some(p));
-    }
-    let named: Vec<&Person> = people
+    people
         .iter()
-        .filter(|p| p.first_name.as_deref().is_some_and(|f| f.eq_ignore_ascii_case(q)))
-        .collect();
-    match named.as_slice() {
-        [one] => Ok(Some(one)),
-        [] => Err(CliError::NotFound(format!("no person `{q}` on this login"))
-            .with_remedy(format!("`{BIN} patients list` shows them: {}", ids(people)))),
-        _ => Err(CliError::Usage(format!(
-            "more than one person is named `{q}`; give the id: {}",
-            ids(people)
-        ))),
-    }
+        .find(|p| {
+            crate::labels::is_the_id(q, &fhir::patient_id(p)) || crate::labels::is_the_label(q, p.label.as_deref())
+        })
+        .map(Some)
+        .ok_or_else(|| {
+            CliError::NotFound("--patient names no one this login shows".into()).with_remedy(format!(
+                "`{BIN} patients list` lists them; give an id or a label it prints"
+            ))
+        })
 }
 
 /// [`pick`] for a command that reads one person.
 fn one<'a>(people: &'a [Person], who: &PatientArg) -> Result<&'a Person, CliError> {
-    pick(people, who, false)?.ok_or_else(|| CliError::Usage("name a person with --patient <ID>".into()))
+    pick(people, who, false)?.ok_or_else(|| CliError::Usage("name a person with --patient <ID or LABEL>".into()))
 }
 
-fn ids(people: &[Person]) -> String {
-    people.iter().map(fhir::patient_id).collect::<Vec<_>>().join(", ")
+/// A person as an error message may name them: by label, else not at all.
+fn named(p: &Person) -> String {
+    match &p.label {
+        Some(l) => format!("`{l}`"),
+        None => "another person on this login".into(),
+    }
 }
 
 /// Whose result a header is: the person its `pid` names. A header with a
@@ -371,12 +401,13 @@ fn patients(ctx: &Ctx, site: &mut Site) -> Result<(), CliError> {
         .map(|c| {
             json!({
                 "id": c.id,
+                "label": c.label.clone().unwrap_or_default(),
                 "relationship": c.relationship,
                 "name": c.name.clone().unwrap_or_default(),
             })
         })
         .collect();
-    output::table(&output::table_view(&rows, &["id", "relationship", "name"]));
+    output::table(&output::table_view(&rows, &["id", "label", "relationship", "name"]));
     Ok(())
 }
 
@@ -475,11 +506,11 @@ fn reader<'a>(people: &'a [Person], who: &PatientArg, h: &Header) -> Result<&'a 
             let p = one(people, who)?;
             match owner(people, h) {
                 Some(o) if o.id != p.id => Err(CliError::Usage(format!(
-                    "result {} is {}'s, not {}'s",
+                    "result {} is not the result of the person --patient names: it belongs to {}",
                     h.id,
-                    fhir::patient_id(o),
-                    fhir::patient_id(p)
-                ))),
+                    named(o)
+                ))
+                .with_remedy("leave out --patient: a result is read as the person it belongs to")),
                 _ => Ok(p),
             }
         }
@@ -871,6 +902,7 @@ mod tests {
             last_name: Some("Example".into()),
             birth_date: None,
             gender: None,
+            label: None,
         }
     }
 
@@ -880,16 +912,46 @@ mod tests {
         }
     }
 
+    /// Every message and remedy an error carries.
+    fn text(e: &CliError) -> String {
+        format!("{} {}", e.message(), e.remedy().unwrap_or_default())
+    }
+
     #[test]
-    fn a_person_is_named_by_id_or_first_name() {
-        let people = [person("1", "Alex", Kind::Account), person("2", "Sam", Kind::Linked)];
-        assert_eq!(one(&people, &who(Some("lcp-2"))).unwrap().id, "2");
-        assert_eq!(one(&people, &who(Some("1"))).unwrap().id, "1");
-        assert_eq!(one(&people, &who(Some("sam"))).unwrap().id, "2");
-        assert_eq!(one(&people, &who(Some("Jordan"))).err().unwrap().exit_code(), 4);
+    fn a_person_is_named_by_id_or_label_never_by_name() {
+        let mut sam = person("2", "Sam", Kind::Linked);
+        sam.label = Some("kid".into());
+        let people = [person("1", "Alex", Kind::Account), sam];
+        let sam_id = fhir::patient_id(&people[1]);
+        assert_eq!(one(&people, &who(Some(&sam_id))).unwrap().id, "2");
+        assert_eq!(one(&people, &who(Some(&sam_id.to_ascii_uppercase()))).unwrap().id, "2");
+        assert_eq!(one(&people, &who(Some("KID"))).unwrap().id, "2");
+        // Neither a first name Labcorp shows nor Labcorp's own id.
+        for q in ["sam", "Alex", "1", "2"] {
+            let e = one(&people, &who(Some(q))).err().unwrap();
+            assert_eq!(e.exit_code(), 4, "{q}");
+            assert!(e.remedy().unwrap().contains("patients list"), "{q}");
+        }
         assert_eq!(one(&people, &who(None)).err().unwrap().exit_code(), 2);
         assert!(pick(&people, &who(None), true).unwrap().is_none());
         assert_eq!(one(&people[..1], &who(None)).unwrap().id, "1");
+    }
+
+    #[test]
+    fn an_error_names_nobody_by_id_and_repeats_no_patient_value() {
+        let people = [person("1", "Alex", Kind::Account), person("2", "Sam", Kind::Linked)];
+        let ids: Vec<String> = people.iter().map(fhir::patient_id).collect();
+        let missing = one(&people, &who(Some("Jordan-Q"))).err().unwrap();
+        let unnamed = one(&people, &who(None)).err().unwrap();
+        let h = Header::read(&json!({ "id": "r", "pid": "2" })).unwrap();
+        let elses = reader(&people, &who(Some(&ids[0])), &h).err().unwrap();
+        for e in [&missing, &unnamed, &elses] {
+            let t = text(e);
+            for id in ids.iter().map(String::as_str).chain(["Jordan-Q", "Alex", "Sam"]) {
+                assert!(!t.contains(id), "{id} in: {t}");
+            }
+        }
+        assert!(text(&unnamed).contains("2 people"), "{}", text(&unnamed));
     }
 
     #[test]
@@ -917,13 +979,19 @@ mod tests {
         let people = [person("1", "Alex", Kind::Account), person("2", "Sam", Kind::Linked)];
         let h = |v: Value| Header::read(&v).unwrap();
         let sams = h(json!({ "id": "r", "pid": "2" }));
+        let (alex, sam) = (fhir::patient_id(&people[0]), fhir::patient_id(&people[1]));
         assert_eq!(reader(&people, &who(None), &sams).unwrap().id, "2");
-        assert_eq!(reader(&people, &who(Some("Sam")), &sams).unwrap().id, "2");
-        assert_eq!(reader(&people, &who(Some("Alex")), &sams).err().unwrap().exit_code(), 2);
+        assert_eq!(reader(&people, &who(Some(&sam)), &sams).unwrap().id, "2");
+        assert_eq!(reader(&people, &who(Some(&alex)), &sams).err().unwrap().exit_code(), 2);
         // With no owner, --patient says whose it is.
         let nobodys = h(json!({ "id": "r", "pid": "9" }));
         assert_eq!(reader(&people, &who(None), &nobodys).err().unwrap().exit_code(), 2);
-        assert_eq!(reader(&people, &who(Some("Alex")), &nobodys).unwrap().id, "1");
+        assert_eq!(reader(&people, &who(Some(&alex)), &nobodys).unwrap().id, "1");
+        // The owner is named by label when they have one.
+        let mut labelled = people.clone();
+        labelled[1].label = Some("kid".into());
+        let e = reader(&labelled, &who(Some(&alex)), &sams).err().unwrap();
+        assert!(e.message().contains("`kid`"), "{}", e.message());
     }
 
     #[test]
