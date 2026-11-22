@@ -24,6 +24,9 @@ use crate::portal::{self, Detail, Header, Item, Line, Person};
 pub const ORGANIZATION_ID: &str = "labcorp";
 pub const ORGANIZATION_NAME: &str = "Labcorp";
 pub const META_SOURCE: &str = "labcorp:portal";
+/// This system and [`FLAG_SYSTEM`] keep the `piekstra` owner although the
+/// repository moved to own-your-health: they are identifiers that imported
+/// records carry, and a store keys records by system and value.
 pub const TAG_SYSTEM: &str = "https://github.com/piekstra/labcorp-cli/fhir/tag";
 pub const TAG_MAPPED: &str = "mapped-from-labcorp-patient";
 /// Labcorp's own codes: an ordered test's `testCode`, a value's `number`.

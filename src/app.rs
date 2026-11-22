@@ -14,7 +14,7 @@ use serde_json::json;
 use crate::cli::*;
 use crate::source;
 
-const REPO: &str = "piekstra/labcorp-cli";
+const REPO: &str = "own-your-health/labcorp-cli";
 /// `info`'s profiles: health-records/v1 and documents/v1.
 pub const PROFILES: &[&str] = &[pk_med_records::PROFILE, pk_cli_documents::PROFILE];
 
