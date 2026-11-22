@@ -1,11 +1,11 @@
 [package]
 name = "labcorp-cli"
 description = "Unofficial read-only CLI for Labcorp lab results and report PDFs from Labcorp Patient (health-records/v1)."
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/piekstra/labcorp-cli"
+repository = "https://github.com/own-your-health/labcorp-cli"
 authors = ["piekstra"]
 publish = false
 
@@ -27,8 +27,8 @@ pk-cli-secrets = { git = "https://github.com/piekstra/cli-common", tag = "v0.33.
 # `auth login --browser` (src/auth.rs, src/site.rs).
 pk-cli-browser = { git = "https://github.com/piekstra/cli-common", tag = "v0.33.5" }
 pk-cli-http = { git = "https://github.com/piekstra/cli-common", tag = "v0.33.5" }
-pk-med-records = { git = "https://github.com/piekstra/medical-common", tag = "v0.6.10" }
-pk-med-fhir = { git = "https://github.com/piekstra/medical-common", tag = "v0.6.10" }
+pk-med-records = { git = "https://github.com/own-your-health/medical-common", tag = "v0.6.10" }
+pk-med-fhir = { git = "https://github.com/own-your-health/medical-common", tag = "v0.6.10" }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
 clap = { version = "4", features = ["derive", "env"] }
 clap_complete = "4"

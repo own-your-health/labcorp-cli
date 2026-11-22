@@ -5,7 +5,7 @@ Unofficial; not affiliated with or endorsed by Labcorp.
 `labcorp` reads your Labcorp lab results and their report PDFs from Labcorp
 Patient (patient.labcorp.com, formerly MyLabcorp), signed in as you. It
 writes them as FHIR R4 (`records-stream/v1`) for
-[medrec](https://github.com/piekstra/medrec-cli), or as files and JSON you
+[medrec](https://github.com/own-your-health/medrec-cli), or as files and JSON you
 keep yourself. It is read-only: nothing it does writes to Labcorp.
 
 ## Who it is for
@@ -62,7 +62,7 @@ This is a summary, not legal advice. `docs/api.md` quotes the terms.
 ## Install
 
 ```sh
-cargo install --git https://github.com/piekstra/labcorp-cli --locked
+cargo install --git https://github.com/own-your-health/labcorp-cli --locked
 # or download a release, labcorp-<target>.tar.gz, and use `labcorp self-update` later
 ```
 

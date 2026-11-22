@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.2.1
+
+The repository moved to `own-your-health/labcorp-cli`, and medical-common to
+`own-your-health/medical-common`. GitHub redirects the old URLs.
+
+- `self-update` reads releases from `own-your-health/labcorp-cli`.
+- medical-common is fetched from its new URL, at the same v0.6.10 commit.
+- The FHIR coding and identifier systems labcorp writes keep their
+  `https://github.com/piekstra/labcorp-cli/...` URIs. They are identifiers
+  that stored records already carry, not links.
+
 ## v0.2.0
 
 Breaking: a person's patient id, and what `--patient` takes (medical-common

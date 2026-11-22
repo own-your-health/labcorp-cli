@@ -6,7 +6,7 @@ for the household's medical-records system (`medrec import --from labcorp`
 reads its `records-stream/v1`). It conforms to piekstra-cli/1 and the
 `health-records/v1` and `documents/v1` profiles, on the `pk-cli-*` crates from
 [cli-common](https://github.com/piekstra/cli-common) and `pk-med-records` and
-`pk-med-fhir` from [medical-common](https://github.com/piekstra/medical-common).
+`pk-med-fhir` from [medical-common](https://github.com/own-your-health/medical-common).
 Every `pk-cli-*` stays on the cli-common tag medical-common pins.
 
 ## Layout
