@@ -1,8 +1,11 @@
 # Fixtures
 
-Every fixture here is synthetic: written by hand in the shapes the
-Labcorp Patient web app reads (its code, 2026-11-19), never copied from a
-real answer. `tests/no_personal_data.rs` checks each identity field against
+Every fixture here is synthetic: written by hand from the fields the
+Labcorp Patient web app's public code reads (2026-11-19), never copied from
+a real answer or shaped on a real person's results. A fixture holds one
+record per field or rule it exercises: no story, so no sequence of results
+and no result with several ordered tests. A test that needs a field to
+change sets it in the answer the test server gives. `tests/no_personal_data.rs` checks each identity field against
 the dummy shapes below, by key.
 
 ## The household
@@ -41,6 +44,5 @@ tracked file.
 | `site/account.json` | `GET /protected/patients/current` |
 | `site/linked-accounts.json` | `GET /protected/patients/current/linkedAccounts` |
 | `site/headers-all.json` | `GET /protected/patients/current/linkedAccounts/results/headers/all` |
-| `site/headers-all-preliminary.json` | the same, one test of `SYNR00000001` still preliminary |
 | `site/account-alone.json` | `GET /protected/patients/current` for an account with no dependents |
 | `site/result-<id>.json` | `GET /protected/patients/current{scope}/results/<id>` |

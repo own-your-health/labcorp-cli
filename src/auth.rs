@@ -284,8 +284,8 @@ pub fn reset(force: bool, interactive: bool, json: bool, quiet: bool) -> Result<
 mod tests {
     use super::*;
 
-    fn adult1() -> ProfileName {
-        ProfileName::parse("adult1").unwrap()
+    fn home() -> ProfileName {
+        ProfileName::parse("home").unwrap()
     }
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
@@ -299,7 +299,7 @@ mod tests {
     fn auth_status_reports_the_kept_browser_profile() {
         let root = temp_root("status");
         let (kept, line) =
-            browser_profile_status(false, || pk_cli_browser::named_profile_exists_in(&root, BIN, "adult1"));
+            browser_profile_status(false, || pk_cli_browser::named_profile_exists_in(&root, BIN, "home"));
         assert_eq!(kept, Some(false));
         assert!(line.is_none());
         let (kept, line) = browser_profile_status(true, || unreachable!("never read under the override"));
@@ -313,8 +313,8 @@ mod tests {
         let root = temp_root("logout");
         let done = run_logout(
             || Ok(true),
-            Some(|| pk_cli_browser::forget_named_profile_in(&root, BIN, "adult1")),
-            &adult1(),
+            Some(|| pk_cli_browser::forget_named_profile_in(&root, BIN, "home")),
+            &home(),
         )
         .unwrap();
         assert_eq!(
@@ -325,7 +325,7 @@ mod tests {
             }
         );
         assert_eq!(done.to_json()["schema"], "auth-logout/v1");
-        let left = run_logout(|| Ok(false), None::<fn() -> Result<bool, BrowserError>>, &adult1()).unwrap();
+        let left = run_logout(|| Ok(false), None::<fn() -> Result<bool, BrowserError>>, &home()).unwrap();
         assert_eq!(left.browser_profile_removed, None);
         assert!(left.line().contains(KEYCHAIN_SERVICE_ENV));
         std::fs::remove_dir_all(&root).unwrap();
@@ -336,12 +336,12 @@ mod tests {
         let e = run_logout(
             || Err(CliError::Keychain("dummy refusal".into())),
             Some(|| Ok(true)),
-            &adult1(),
+            &home(),
         )
         .err()
         .unwrap();
         let remedy = e.remedy().unwrap();
         assert!(remedy.contains("the browser profile was removed"), "{remedy}");
-        assert!(remedy.contains("auth logout --profile adult1"), "{remedy}");
+        assert!(remedy.contains("auth logout --profile home"), "{remedy}");
     }
 }

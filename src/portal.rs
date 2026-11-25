@@ -1,8 +1,8 @@
 //! Labcorp Patient's answers, read into labcorp's model (docs/api.md,
 //! "Reads"). Fields are read by name from the JSON, a number accepted where
 //! text is expected, so a field the site renames reads as absent rather than
-//! failing the whole answer; `tests/fixture_shapes.rs` holds the fields that
-//! matter to their shapes.
+//! failing the whole answer; `tests/site_e2e.rs` reads the fields that matter
+//! from the fixtures.
 
 use pk_cli_core::{dates, CliError};
 use serde_json::Value;

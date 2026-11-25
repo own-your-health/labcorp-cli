@@ -32,7 +32,10 @@
           "referenceRange": "<1.0",
           "units": "ng/mL",
           "status": "final",
-          "comments": ["Synthetic comment one.", "Synthetic comment two."]
+          "comments": [
+            "Synthetic comment one.",
+            "Synthetic comment two."
+          ]
         },
         {
           "number": "000004",
@@ -49,23 +52,6 @@
           "name": "Please Note:",
           "value": "Synthetic note text.",
           "abnormalIndicator": null,
-          "referenceRange": null,
-          "units": null,
-          "status": "final",
-          "comments": []
-        }
-      ]
-    },
-    {
-      "testName": "Example Single Test",
-      "testCode": "000010",
-      "itemStatus": "FINAL",
-      "results": [
-        {
-          "number": "000011",
-          "name": "Example Analyte D",
-          "value": "",
-          "abnormalIndicator": "T",
           "referenceRange": null,
           "units": null,
           "status": "final",

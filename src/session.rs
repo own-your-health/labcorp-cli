@@ -246,8 +246,8 @@ mod tests {
         dir
     }
 
-    fn adult1() -> ProfileName {
-        ProfileName::parse("adult1").unwrap()
+    fn home() -> ProfileName {
+        ProfileName::parse("home").unwrap()
     }
 
     fn dummy() -> Session {
@@ -280,28 +280,28 @@ mod tests {
         let dir = temp_dir("entries");
         let keys = Arc::new(MemoryKeys::new());
         let store = SessionStore::with_vault(Vault::new(keys.clone(), &dir));
-        let adult2 = ProfileName::parse("adult2").unwrap();
-        assert!(store.get(&adult1()).unwrap().is_none());
+        let work = ProfileName::parse("work").unwrap();
+        assert!(store.get(&home()).unwrap().is_none());
         assert_eq!(keys.reads(), 0, "nothing stored, nothing read");
-        assert_eq!(entry(&adult1()), "adult1/session");
+        assert_eq!(entry(&home()), "home/session");
 
-        store.put(&adult1(), &dummy()).unwrap();
-        let read = store.get(&adult1()).unwrap().unwrap();
+        store.put(&home(), &dummy()).unwrap();
+        let read = store.get(&home()).unwrap().unwrap();
         assert_eq!(read.access_token.expose(), "dummy.access.token");
         assert_eq!(read.expires_at, 2_000_000_000);
         assert_eq!(read.okta_cookies.as_ref().map(Secret::expose), Some("dummy_idx=1"));
         assert!(read.api_cookies.is_none());
         assert_eq!(read.user_agent.as_deref(), Some("Mozilla/5.0 (test)"));
-        assert!(store.get(&adult2).unwrap().is_none());
+        assert!(store.get(&work).unwrap().is_none());
 
         for file in std::fs::read_dir(&dir).unwrap() {
             let bytes = std::fs::read(file.unwrap().path()).unwrap();
             let text = String::from_utf8_lossy(&bytes);
             assert!(!text.contains("dummy.access") && !text.contains("dummy_idx"));
         }
-        assert!(store.delete(&adult1()).unwrap());
-        assert!(!store.delete(&adult1()).unwrap());
-        assert!(store.load(&adult1()).err().unwrap().is_auth());
+        assert!(store.delete(&home()).unwrap());
+        assert!(!store.delete(&home()).unwrap());
+        assert!(store.load(&home()).err().unwrap().is_auth());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -320,16 +320,16 @@ mod tests {
         let dir = temp_dir("unreadable");
         let vault = Vault::new(MemoryKeys::new(), &dir);
         vault
-            .put("adult1/session", &Secret::new(r#"{"token":"dummy_secret"}"#))
+            .put("home/session", &Secret::new(r#"{"token":"dummy_secret"}"#))
             .unwrap();
         vault
             .put(
-                "adult2/session",
+                "work/session",
                 &Secret::new(r#"{"access_token":"","expires_at":1,"captured_at":"x"}"#),
             )
             .unwrap();
         let store = SessionStore::with_vault(vault);
-        for name in ["adult1", "adult2"] {
+        for name in ["home", "work"] {
             let e = store.get(&ProfileName::parse(name).unwrap()).err().unwrap();
             assert_eq!(e.reason(), Some(Reason::CredentialUnreadable), "{name}");
             assert!(!e.to_string().contains("dummy"), "{e}");

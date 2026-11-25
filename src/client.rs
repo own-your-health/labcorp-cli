@@ -484,7 +484,7 @@ mod tests {
 
     #[test]
     fn judge_types_each_refusal() {
-        let profile = ProfileName::parse("adult1").unwrap();
+        let profile = ProfileName::parse("home").unwrap();
         let answer = |status, retry_after| Answer {
             status,
             content_type: Some("application/json".into()),

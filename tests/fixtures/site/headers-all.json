@@ -13,16 +13,12 @@
     "dashboardCategory": "new",
     "lastViewedDate": null,
     "testCodes": [
-      "000001",
-      "000010"
+      "000001"
     ],
-    "totalTests": 2,
-    "completedTests": 2,
+    "totalTests": 1,
+    "completedTests": 1,
     "itemStatuses": {
       "000001": {
-        "status": "FINAL"
-      },
-      "000010": {
         "status": "FINAL"
       }
     }
@@ -77,8 +73,8 @@
     "patientName": "SAM EXAMPLE",
     "dateOfService": "2026-02-02T10:00:00Z",
     "reportDate": "2026-02-03T10:00:00Z",
-    "orderingProviderName": "Example Pediatrician",
-    "accountName": "Example Pediatrics",
+    "orderingProviderName": "Example Clinician",
+    "accountName": "Example Clinic",
     "isDetailAvailable": true,
     "hasMinimumDataForPdfRetrieval": false,
     "dashboardCategory": "recently_viewed",
@@ -121,8 +117,8 @@
     "patientName": "SAM EXAMPLE",
     "dateOfService": null,
     "reportDate": null,
-    "orderingProviderName": "Example Pediatrician",
-    "accountName": "Example Pediatrics",
+    "orderingProviderName": "Example Clinician",
+    "accountName": "Example Clinic",
     "isDetailAvailable": false,
     "hasMinimumDataForPdfRetrieval": false,
     "dashboardCategory": "upcoming",
@@ -134,6 +130,28 @@
     "itemStatuses": {
       "000030": {
         "status": "UPCOMING"
+      }
+    }
+  },
+  {
+    "id": "SYNR00000007",
+    "pid": "SYNP000001",
+    "patientName": "ALEX EXAMPLE",
+    "dateOfService": "2025-12-10T09:00:00Z",
+    "reportDate": "2025-12-11T09:00:00Z",
+    "orderingProviderName": "Example Clinician",
+    "accountName": "Example Clinic",
+    "isDetailAvailable": true,
+    "hasMinimumDataForPdfRetrieval": false,
+    "dashboardCategory": "recently_viewed",
+    "testCodes": [
+      "000010"
+    ],
+    "totalTests": 1,
+    "completedTests": 1,
+    "itemStatuses": {
+      "000010": {
+        "status": "FINAL"
       }
     }
   }
