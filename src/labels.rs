@@ -314,8 +314,8 @@ mod tests {
 
     #[test]
     fn a_read_adds_people_and_keeps_their_labels() {
-        let (dir, store) = store("read", r#"{"profiles":{"adult1":{}}}"#);
-        let profile = ProfileName::parse("adult1").unwrap();
+        let (dir, store) = store("read", r#"{"profiles":{"home":{}}}"#);
+        let profile = ProfileName::parse("home").unwrap();
         let (alex, sam) = (person("1", Kind::Account), person("2", Kind::Dependent));
         let (alex_id, sam_id) = (fhir::patient_id(&alex), fhir::patient_id(&sam));
         let mut read = vec![alex.clone(), sam.clone()];
@@ -344,21 +344,21 @@ mod tests {
 
     #[test]
     fn settings_this_build_does_not_know_survive_a_write() {
-        let profile = ProfileName::parse("adult1").unwrap();
+        let profile = ProfileName::parse("home").unwrap();
         let alex = person("1", Kind::Account);
         let id = fhir::patient_id(&alex);
         let body = format!(
-            r#"{{"profiles":{{"adult1":{{"later":1,"members":{{"{id}":{{"label":"me","also_later":true}}}}}}}}}}"#
+            r#"{{"profiles":{{"home":{{"later":1,"members":{{"{id}":{{"label":"me","also_later":true}}}}}}}}}}"#
         );
         let (dir, store) = store("later", &body);
         let mut read = vec![alex];
         record(&store, &profile, &mut read).unwrap();
         let raw: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join("config.json")).unwrap()).unwrap();
-        let adult1 = &raw["profiles"]["adult1"];
-        assert_eq!(adult1["later"], 1, "{raw}");
-        assert_eq!(adult1["members"][&id]["also_later"], true, "{raw}");
-        assert_eq!(adult1["members"][&id]["relationship"], "self", "{raw}");
+        let home = &raw["profiles"]["home"];
+        assert_eq!(home["later"], 1, "{raw}");
+        assert_eq!(home["members"][&id]["also_later"], true, "{raw}");
+        assert_eq!(home["members"][&id]["relationship"], "self", "{raw}");
         assert_eq!(read[0].label.as_deref(), Some("me"));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -401,15 +401,15 @@ mod tests {
     #[test]
     fn config_show_counts_people_and_shows_no_id_or_label() {
         let mut v = serde_json::json!({ "profiles": {
-            "adult1": { "members": { "l0000000000000001": { "label": "me" }, "l0000000000000002": {} } },
-            "adult2": {},
+            "home": { "members": { "l0000000000000001": { "label": "me" }, "l0000000000000002": {} } },
+            "work": {},
         } });
         summarize(&mut v);
         assert_eq!(
-            v["profiles"]["adult1"]["members"],
+            v["profiles"]["home"]["members"],
             serde_json::json!({ "people": 2, "labelled": 1 })
         );
-        assert_eq!(v["profiles"]["adult2"], serde_json::json!({}));
+        assert_eq!(v["profiles"]["work"], serde_json::json!({}));
         let text = v.to_string();
         assert!(!text.contains("l000") && !text.contains("\"me\""), "{text}");
     }

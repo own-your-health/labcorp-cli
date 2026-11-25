@@ -796,6 +796,27 @@ mod tests {
     }
 
     #[test]
+    fn a_report_refers_to_each_ordered_test_once() {
+        let l = line("1.50", None, None);
+        let mut second = item(vec![l.clone()]);
+        second.test_code = Some("000009".into());
+        let d = Detail {
+            header: header(),
+            items: vec![item(vec![l.clone(), l]), second],
+        };
+        let r = diagnostic_report(&person(), &d, &Ids::of(&d), None);
+        let refs: Vec<&str> = r["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|x| x["reference"].as_str().unwrap())
+            .collect();
+        assert_eq!(refs.len(), 2, "{refs:?}");
+        assert!(refs[0].starts_with("Observation/lco-r1-000001"), "{refs:?}");
+        assert!(refs[1].starts_with("Observation/lco-r1-000009"), "{refs:?}");
+    }
+
+    #[test]
     fn a_report_names_its_panels_and_its_pdf() {
         let l = line("1.50", None, None);
         let d = Detail {

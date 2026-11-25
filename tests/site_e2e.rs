@@ -61,8 +61,9 @@ struct Plan {
     faults: Vec<Fault>,
     /// The fixture `/protected/patients/current` answers.
     account: &'static str,
-    /// The fixture the results list answers.
-    headers: &'static str,
+    /// The status the results list gives SYNR00000001's one ordered test,
+    /// in place of the fixture's.
+    item_status: Option<&'static str>,
     /// The bytes every report PDF answers.
     pdf: &'static [u8],
 }
@@ -81,7 +82,7 @@ impl Server {
         let plan = Arc::new(Mutex::new(Plan {
             faults: Vec::new(),
             account: "account.json",
-            headers: "headers-all.json",
+            item_status: None,
             pdf: PDF,
         }));
         let (s, f) = (seen.clone(), plan.clone());
@@ -132,9 +133,9 @@ impl Server {
         self.plan.lock().unwrap().account = fixture;
     }
 
-    fn headers(&self, fixture: &'static str, pdf: &'static [u8]) {
+    fn item_status(&self, status: &'static str, pdf: &'static [u8]) {
         let mut plan = self.plan.lock().unwrap();
-        plan.headers = fixture;
+        plan.item_status = Some(status);
         plan.pdf = pdf;
     }
 }
@@ -272,7 +273,7 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, plan: &Mutex<Plan>) {
         "/protected/patients/current" => json(&mut stream, 200, &fixture(plan.account)),
         "/protected/patients/current/linkedAccounts" => json(&mut stream, 200, &fixture("linked-accounts.json")),
         "/protected/patients/current/linkedAccounts/results/headers/all" => {
-            json(&mut stream, 200, &fixture(plan.headers))
+            json(&mut stream, 200, &results_list(&plan))
         }
         p => {
             let tail = p.rsplit("/results/").next().unwrap_or("");
@@ -300,6 +301,22 @@ fn serve(mut stream: TcpStream, seen: &Mutex<Vec<Seen>>, plan: &Mutex<Plan>) {
             }
         }
     }
+}
+
+/// The results list, with the planned status set on one field.
+fn results_list(plan: &Plan) -> String {
+    let mut list: Value = serde_json::from_str(&fixture("headers-all.json")).unwrap();
+    if let Some(status) = plan.item_status {
+        let header = list
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|h| h["id"] == "SYNR00000001")
+            .unwrap();
+        header["itemStatuses"]["000001"]["status"] = status.into();
+        header["completedTests"] = u8::from(status == "FINAL").into();
+    }
+    list.to_string()
 }
 
 /// A kept session: its access token, renewal time and Okta cookies.
@@ -335,7 +352,7 @@ fn session(token: &str, expires_at: u64, okta: Option<&str>) -> Session {
 const FAR: u64 = 4_102_444_800;
 
 fn profile() -> ProfileName {
-    ProfileName::parse("adult1").unwrap()
+    ProfileName::parse("home").unwrap()
 }
 
 /// One person's export from the server, read back.
@@ -422,7 +439,7 @@ fn an_export_carries_the_persons_results_values_and_pdfs() {
         counts,
         [
             ("Binary".into(), 1),
-            ("DiagnosticReport".into(), 2),
+            ("DiagnosticReport".into(), 3),
             ("DocumentReference".into(), 1),
             ("Observation".into(), 9),
             ("Organization".into(), 1),
@@ -456,7 +473,7 @@ fn an_export_carries_the_persons_results_values_and_pdfs() {
     assert_eq!(r1["status"], "final");
     assert_eq!(r1["effectiveDateTime"], "2026-03-04");
     assert_eq!(r1["presentedForm"][0]["url"], "Binary/lcb-SYNR00000001");
-    assert_eq!(r1["result"].as_array().unwrap().len(), 2);
+    assert_eq!(r1["result"].as_array().unwrap().len(), 1);
     let r3 = reports.iter().find(|r| r["id"] == "lcr-SYNR00000003").unwrap();
     assert!(r3.get("presentedForm").is_none());
     let obs = of(&rs, "Observation");
@@ -473,7 +490,7 @@ fn an_export_carries_the_persons_results_values_and_pdfs() {
     assert_eq!(b["note"].as_array().unwrap().len(), 2);
     let d = obs
         .iter()
-        .find(|o| o["id"] == "lco-SYNR00000001-000010-000011")
+        .find(|o| o["id"] == "lco-SYNR00000007-000010-000011")
         .unwrap();
     assert_eq!(d["dataAbsentReason"]["text"], "Test Not Performed");
     let binary = of(&rs, "Binary")[0];
@@ -595,7 +612,7 @@ fn an_ended_okta_session_is_exit_3_naming_the_sign_in() {
     let mut site = Site::new(client, true);
     let e = site.household().err().unwrap();
     assert_eq!(e.exit_code(), 3);
-    assert!(e.remedy().unwrap().contains("auth login --browser --profile adult1"));
+    assert!(e.remedy().unwrap().contains("auth login --browser --profile home"));
     assert!(!e.to_string().contains("dummy"), "{e}");
     assert!(kept.0.lock().unwrap().is_empty());
     // No session to renew from at all is the same.
@@ -634,9 +651,9 @@ fn a_server_error_skips_that_result_and_goes_on() {
     let (_, t) = export(&server, session(LIVE, FAR, None), &kept, "SYNP000001");
     assert!(t.complete);
     let codes: Vec<&str> = t.skipped.iter().map(|s| s.code.as_str()).collect();
-    // Oldest collection first: two results refused, the upcoming one not
+    // Oldest collection first: three results refused, the upcoming one not
     // read at all.
-    assert_eq!(codes, ["upstream", "upstream", "not_ready"]);
+    assert_eq!(codes, ["upstream", "upstream", "upstream", "not_ready"]);
 }
 
 #[test]
@@ -657,7 +674,7 @@ fn since_takes_results_reported_or_collected_from_that_day_and_the_undated() {
     let server = Server::start();
     let kept = Kept::default();
     // SYNR00000001 was collected the day before and reported on the day;
-    // SYNR00000002 is collected later (not ready); SYNR00000003 is older.
+    // SYNR00000002 is collected later (not ready); the others are older.
     let e = export_since(
         &server,
         session(LIVE, FAR, None),
@@ -711,7 +728,7 @@ fn a_forbidden_result_is_skipped_and_the_rest_exported() {
             ("lcr-SYNR00000002".into(), "not_ready".into()),
         ]
     );
-    assert_eq!(ids(&rs, "DiagnosticReport"), ["lcr-SYNR00000001"]);
+    assert_eq!(ids(&rs, "DiagnosticReport"), ["lcr-SYNR00000007", "lcr-SYNR00000001"]);
     // A 403 is no reason to renew.
     assert!(!server.paths().iter().any(|p| p.starts_with("/oauth2")));
 }
@@ -742,7 +759,7 @@ fn a_result_naming_nobody_here_is_never_filed_under_the_only_person() {
     assert!(e.trailer.complete);
     let mut reports = ids(&e.resources, "DiagnosticReport");
     reports.sort_unstable();
-    assert_eq!(reports, ["lcr-SYNR00000001", "lcr-SYNR00000003"]);
+    assert_eq!(reports, ["lcr-SYNR00000001", "lcr-SYNR00000003", "lcr-SYNR00000007"]);
     for r in &e.resources {
         let text = r.to_string();
         for other in [
@@ -892,11 +909,11 @@ fn held_bare(e: &Exported, id: &str) -> (RawResource, Provenance) {
 fn the_final_report_replaces_the_preliminary_one_in_the_store() {
     let server = Server::start();
     let kept = Kept::default();
-    server.headers("headers-all-preliminary.json", PDF_PRELIMINARY);
+    server.item_status("PRELIMINARY", PDF_PRELIMINARY);
     let early = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
     // A second apart at least: read times are written to the second.
     std::thread::sleep(std::time::Duration::from_millis(1100));
-    server.headers("headers-all.json", PDF_FINAL);
+    server.item_status("FINAL", PDF_FINAL);
     let late = export_since(&server, session(LIVE, FAR, None), &kept, "SYNP000001", None);
     // The PDF changed under the same listed date: held with no time of its
     // own, the final one replaces it.
@@ -921,7 +938,7 @@ fn the_final_report_replaces_the_preliminary_one_in_the_store() {
     // replaces; the value did not change and only refreshes.
     for (id, want) in [
         ("lcr-SYNR00000001", Filing::Replaces),
-        ("lco-SYNR00000001-000010-000011", Filing::Refreshed),
+        ("lco-SYNR00000001-000001-000002", Filing::Refreshed),
     ] {
         let (held, held_p) = filed(&early, id);
         let (incoming, incoming_p) = filed(&late, id);
@@ -943,7 +960,7 @@ fn a_read_keeps_the_people_it_lists_and_their_labels_reach_the_stream() {
     let dir = std::env::temp_dir().join(format!("labcorp-e2e-labels-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("config.json");
-    std::fs::write(&path, r#"{"profiles":{"adult1":{}}}"#).unwrap();
+    std::fs::write(&path, r#"{"profiles":{"home":{}}}"#).unwrap();
     let store = || pk_cli_config::ConfigStore::new("labcorp").with_override(Some(path.clone()));
     let site = |s| {
         let client = Client::new(&profile(), s, &kept, server.endpoints()).unwrap();
@@ -955,7 +972,7 @@ fn a_read_keeps_the_people_it_lists_and_their_labels_reach_the_stream() {
     assert_eq!(people.len(), 3);
     let raw = std::fs::read_to_string(&path).unwrap();
     let v: Value = serde_json::from_str(&raw).unwrap();
-    let members = v["profiles"]["adult1"]["members"].as_object().unwrap();
+    let members = v["profiles"]["home"]["members"].as_object().unwrap();
     let sam = patient_id("SYNP000002");
     assert_eq!(members.len(), 3, "{raw}");
     assert_eq!(members[&sam]["relationship"], "proxy", "{raw}");
@@ -964,7 +981,7 @@ fn a_read_keeps_the_people_it_lists_and_their_labels_reach_the_stream() {
     }
     // A label set afterwards reaches the stream header's patient.
     let mut v = v;
-    v["profiles"]["adult1"]["members"][&sam]["label"] = "kid".into();
+    v["profiles"]["home"]["members"][&sam]["label"] = "kid".into();
     std::fs::write(&path, v.to_string()).unwrap();
     let mut s = site(session(LIVE, FAR, None));
     let people = s.household().unwrap();
@@ -988,7 +1005,7 @@ fn a_config_that_cannot_keep_the_people_does_not_stop_a_read() {
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("config.json");
     // A members entry that does not read as one.
-    std::fs::write(&path, r#"{"profiles":{"adult1":{"members":{"x":5}}}}"#).unwrap();
+    std::fs::write(&path, r#"{"profiles":{"home":{"members":{"x":5}}}}"#).unwrap();
     let client = Client::new(&profile(), session(LIVE, FAR, None), &kept, server.endpoints()).unwrap();
     let store = pk_cli_config::ConfigStore::new("labcorp").with_override(Some(path.clone()));
     let mut site = Site::new(client, true).with_labels(store, profile());
@@ -1000,7 +1017,7 @@ fn a_config_that_cannot_keep_the_people_does_not_stop_a_read() {
     // The config is left as it was.
     assert_eq!(
         std::fs::read_to_string(&path).unwrap(),
-        r#"{"profiles":{"adult1":{"members":{"x":5}}}}"#
+        r#"{"profiles":{"home":{"members":{"x":5}}}}"#
     );
     std::fs::remove_dir_all(&dir).ok();
 }

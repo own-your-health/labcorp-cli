@@ -12,8 +12,8 @@
 //! reads one: the vault reads its key only when an entry exists (cli-common
 //! DESIGN.md §2.5).
 //!
-//! The temp config of [`labcorp`] configures two profiles, `adult1` and
-//! `adult2`.
+//! The temp config of [`labcorp`] configures two profiles, `home` and
+//! `work`.
 
 use assert_cmd::Command;
 use predicates::prelude::*;
@@ -62,7 +62,7 @@ fn labcorp_in(config: std::path::PathBuf) -> Command {
 }
 
 fn labcorp() -> Command {
-    labcorp_in(config_with(&["adult1", "adult2"]))
+    labcorp_in(config_with(&["home", "work"]))
 }
 
 fn error_of(out: &assert_cmd::assert::Assert) -> Value {
@@ -170,9 +170,9 @@ fn a_login_command_without_a_profile_is_a_usage_error() {
         let e = error_of(&out);
         assert_eq!(e["error"]["code"], "usage", "{args:?}");
         let text = e.to_string();
-        assert!(text.contains("adult1") && text.contains("adult2"), "{args:?}: {text}");
+        assert!(text.contains("home") && text.contains("work"), "{args:?}: {text}");
     }
-    let lone = labcorp_in(config_with(&["adult2"]))
+    let lone = labcorp_in(config_with(&["work"]))
         .args(["api", "GET", "/protected/patients/current", "--json"])
         .assert()
         .code(2);
@@ -190,11 +190,11 @@ fn an_unknown_profile_is_a_usage_error() {
 #[test]
 fn the_profile_variable_is_the_fallback() {
     labcorp()
-        .env("LABCORP_PROFILE", "adult2")
+        .env("LABCORP_PROFILE", "work")
         .args(["auth", "status", "--json"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("\"account\": \"adult2\""));
+        .stdout(predicate::str::contains("\"account\": \"work\""));
 }
 
 #[test]
@@ -206,27 +206,23 @@ fn a_command_without_a_login_takes_no_profile() {
         vec!["completions", "bash"],
         vec!["auth", "reset", "--force"],
     ] {
-        labcorp().args(&args).args(["--profile", "adult1"]).assert().code(2);
+        labcorp().args(&args).args(["--profile", "home"]).assert().code(2);
     }
     // The variable is not read by them.
-    labcorp()
-        .env("LABCORP_PROFILE", "adult1")
-        .arg("info")
-        .assert()
-        .success();
+    labcorp().env("LABCORP_PROFILE", "home").arg("info").assert().success();
 }
 
 #[test]
 fn auth_status_without_a_session_says_so() {
     let out = labcorp()
-        .args(["auth", "status", "--profile", "adult1", "--json"])
+        .args(["auth", "status", "--profile", "home", "--json"])
         .assert()
         .success();
     let v: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
     assert_eq!(v["schema"], "auth-status/v1");
     assert_eq!(v["authenticated"], false);
     assert_eq!(v["method"], "browser-session");
-    assert_eq!(v["account"], "adult1");
+    assert_eq!(v["account"], "home");
 }
 
 /// A read without a stored session is exit 3 naming the sign-in, before any
@@ -244,19 +240,19 @@ fn a_read_without_a_session_is_exit_3() {
     ] {
         let out = labcorp()
             .args(&args)
-            .args(["--profile", "adult1", "--json"])
+            .args(["--profile", "home", "--json"])
             .assert()
             .code(3);
         let e = error_of(&out);
         assert_eq!(e["error"]["code"], "auth", "{args:?}");
         assert!(
-            e.to_string().contains("auth login --browser --profile adult1"),
+            e.to_string().contains("auth login --browser --profile home"),
             "{args:?}"
         );
     }
     // The stream's own errors before its header are the error document's.
     labcorp()
-        .args(["records", "export", "--ndjson", "--profile", "adult1"])
+        .args(["records", "export", "--ndjson", "--profile", "home"])
         .assert()
         .code(3)
         .stdout(predicate::str::is_empty());
@@ -270,18 +266,18 @@ fn records_export_needs_a_destination_and_no_json_with_the_stream() {
         vec!["records", "export", "--ndjson", "-o", "x"],
         vec!["records", "export", "--ndjson", "--since", "11/19/2026"],
     ] {
-        labcorp().args(&args).args(["--profile", "adult1"]).assert().code(2);
+        labcorp().args(&args).args(["--profile", "home"]).assert().code(2);
     }
 }
 
 #[test]
 fn date_flags_are_iso() {
     labcorp()
-        .args(["results", "list", "--profile", "adult1", "--since", "2026-13-01"])
+        .args(["results", "list", "--profile", "home", "--since", "2026-13-01"])
         .assert()
         .code(2);
     labcorp()
-        .args(["documents", "list", "--profile", "adult1", "--until", "yesterday"])
+        .args(["documents", "list", "--profile", "home", "--until", "yesterday"])
         .assert()
         .code(2);
 }
@@ -289,15 +285,15 @@ fn date_flags_are_iso() {
 #[test]
 fn documents_download_needs_an_id_or_all_and_all_needs_a_folder() {
     labcorp()
-        .args(["documents", "download", "--profile", "adult1"])
+        .args(["documents", "download", "--profile", "home"])
         .assert()
         .code(2);
     labcorp()
-        .args(["documents", "download", "x", "--all", "--profile", "adult1"])
+        .args(["documents", "download", "x", "--all", "--profile", "home"])
         .assert()
         .code(2);
     labcorp()
-        .args(["documents", "download", "--all", "-o", "-", "--profile", "adult1"])
+        .args(["documents", "download", "--all", "-o", "-", "--profile", "home"])
         .assert()
         .code(2);
 }
@@ -305,12 +301,12 @@ fn documents_download_needs_an_id_or_all_and_all_needs_a_folder() {
 #[test]
 fn auth_login_needs_the_browser_flag() {
     let out = labcorp()
-        .args(["auth", "login", "--profile", "adult1", "--json"])
+        .args(["auth", "login", "--profile", "home", "--json"])
         .assert()
         .code(2);
     assert!(error_of(&out).to_string().contains("--browser"));
     labcorp()
-        .args(["auth", "login", "--profile", "adult1", "--fresh-profile"])
+        .args(["auth", "login", "--profile", "home", "--fresh-profile"])
         .assert()
         .code(2);
 }
@@ -318,7 +314,7 @@ fn auth_login_needs_the_browser_flag() {
 #[test]
 fn auth_logout_without_a_session_removes_nothing() {
     let out = labcorp()
-        .args(["auth", "logout", "--profile", "adult1", "--json"])
+        .args(["auth", "logout", "--profile", "home", "--json"])
         .assert()
         .success();
     let v: Value = serde_json::from_slice(&out.get_output().stdout).unwrap();
@@ -348,7 +344,7 @@ fn api_is_read_only_and_stays_on_the_portal_api() {
         vec!["api", "GET", "https://example.com/protected"],
         vec!["api", "GET", "protected/patients/current"],
     ] {
-        labcorp().args(&args).args(["--profile", "adult1"]).assert().code(2);
+        labcorp().args(&args).args(["--profile", "home"]).assert().code(2);
     }
 }
 
@@ -362,7 +358,7 @@ fn profiles_add_list_remove() {
         .success()
         .stdout(predicate::str::contains("\"profiles\": []"));
     run()
-        .args(["profiles", "add", "adult2", "--json"])
+        .args(["profiles", "add", "work", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"added\": true"));
@@ -371,11 +367,11 @@ fn profiles_add_list_remove() {
         .args(["profiles", "list", "--json"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("adult2"));
-    run().args(["profiles", "remove", "adult2"]).assert().code(6);
+        .stdout(predicate::str::contains("work"));
+    run().args(["profiles", "remove", "work"]).assert().code(6);
     run().args(["profiles", "remove", "adult9", "--force"]).assert().code(4);
     run()
-        .args(["profiles", "remove", "adult2", "--force", "--json"])
+        .args(["profiles", "remove", "work", "--force", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"session_removed\": false"));
@@ -387,22 +383,22 @@ fn profiles_add_list_remove() {
 }
 
 /// Two synthetic patient ids (17 characters, as labcorp derives them, but
-/// not the digest of anyone) that a read of `adult1` has listed: one
+/// not the digest of anyone) that a read of `home` has listed: one
 /// labelled `me`, one with no label.
 const ME: &str = "l0000000000000001";
 const KID: &str = "l0000000000000002";
 
-/// A config where `adult1` has listed [`ME`] (labelled `me`) and [`KID`],
-/// and `adult2` nobody.
+/// A config where `home` has listed [`ME`] (labelled `me`) and [`KID`],
+/// and `work` nobody.
 fn config_with_people() -> std::path::PathBuf {
     let base = tmp();
     std::fs::create_dir_all(base.join("labcorp")).unwrap();
     let config = serde_json::json!({ "profiles": {
-        "adult1": { "members": {
+        "home": { "members": {
             ME: { "label": "me", "relationship": "self" },
             KID: { "relationship": "proxy" },
         } },
-        "adult2": {},
+        "work": {},
     } });
     std::fs::write(base.join("labcorp").join("config.json"), config.to_string()).unwrap();
     base
@@ -411,7 +407,7 @@ fn config_with_people() -> std::path::PathBuf {
 fn label_of(config: &std::path::Path, id: &str) -> Value {
     let raw = std::fs::read_to_string(config.join("labcorp").join("config.json")).unwrap();
     let v: Value = serde_json::from_str(&raw).unwrap();
-    v["profiles"]["adult1"]["members"][id]["label"].clone()
+    v["profiles"]["home"]["members"][id]["label"].clone()
 }
 
 #[test]
@@ -419,7 +415,7 @@ fn patients_label_sets_and_clears_a_label_without_a_session() {
     let config = config_with_people();
     let run = |args: &[&str]| {
         labcorp_in(config.clone())
-            .args(["--json", "patients", "label", "--profile", "adult1"])
+            .args(["--json", "patients", "label", "--profile", "home"])
             .args(args)
             .assert()
     };
@@ -446,7 +442,7 @@ fn patients_label_refuses_what_would_make_patient_ambiguous() {
     let config = config_with_people();
     let run = |args: &[&str]| {
         labcorp_in(config.clone())
-            .args(["--json", "patients", "label", "--profile", "adult1"])
+            .args(["--json", "patients", "label", "--profile", "home"])
             .args(args)
             .assert()
     };
@@ -469,7 +465,7 @@ fn patients_label_refuses_what_would_make_patient_ambiguous() {
 #[test]
 fn patients_label_for_no_one_listed_is_exit_4_and_repeats_nothing() {
     let config = config_with_people();
-    for (profile, q) in [("adult1", "l00000000000000ff"), ("adult1", "Jordan"), ("adult2", ME)] {
+    for (profile, q) in [("home", "l00000000000000ff"), ("home", "Jordan"), ("work", ME)] {
         let out = labcorp_in(config.clone())
             .args(["--json", "patients", "label", "--profile", profile, "--patient", q, "x"])
             .assert()
@@ -493,8 +489,8 @@ fn config_show_prints_counts_not_patient_ids_or_labels() {
         assert!(!text.contains("\"me\"") && !text.contains(" me\n"), "{text}");
         if json {
             let v: Value = serde_json::from_str(&text).unwrap();
-            assert_eq!(v["profiles"]["adult1"]["members"]["people"], 2, "{v}");
-            assert_eq!(v["profiles"]["adult1"]["members"]["labelled"], 1, "{v}");
+            assert_eq!(v["profiles"]["home"]["members"]["people"], 2, "{v}");
+            assert_eq!(v["profiles"]["home"]["members"]["labelled"], 1, "{v}");
         }
     }
 }

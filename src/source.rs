@@ -62,15 +62,15 @@ mod tests {
 
     #[test]
     fn a_profile_must_be_named_and_configured() {
-        let two = configured(&["adult1", "adult2"]);
-        assert_eq!(resolve_profile(Some("adult2"), &two).unwrap().as_str(), "adult2");
+        let two = configured(&["home", "work"]);
+        assert_eq!(resolve_profile(Some("work"), &two).unwrap().as_str(), "work");
         let none = resolve_profile(None, &two).err().unwrap();
         assert_eq!(none.exit_code(), 2);
-        assert!(none.to_string().contains("adult1"), "{none}");
+        assert!(none.to_string().contains("home"), "{none}");
         let unknown = resolve_profile(Some("adult3"), &two).err().unwrap();
         assert_eq!(unknown.exit_code(), 2);
         // A lone profile is never picked.
-        let one = configured(&["adult2"]);
+        let one = configured(&["work"]);
         assert_eq!(resolve_profile(None, &one).err().unwrap().exit_code(), 2);
         // None configured names the command that adds one.
         let e = resolve_profile(None, &Profiles::new()).err().unwrap();

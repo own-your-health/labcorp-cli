@@ -1,0 +1,29 @@
+{
+  "header": {
+    "id": "SYNR00000007",
+    "pid": "SYNP000001",
+    "dateOfService": "2025-12-10T09:00:00Z",
+    "reportDate": "2025-12-11T09:00:00Z",
+    "orderingProviderName": "Example Clinician",
+    "accountName": "Example Clinic"
+  },
+  "orderedItems": [
+    {
+      "testName": "Example Single Test",
+      "testCode": "000010",
+      "itemStatus": "FINAL",
+      "results": [
+        {
+          "number": "000011",
+          "name": "Example Analyte D",
+          "value": "",
+          "abnormalIndicator": "T",
+          "referenceRange": null,
+          "units": null,
+          "status": "final",
+          "comments": []
+        }
+      ]
+    }
+  ]
+}
